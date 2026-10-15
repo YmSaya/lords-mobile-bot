@@ -30,13 +30,22 @@ void format_number2(uint64_t num, char *out, size_t size) {
 
 void ShowBankBalance(Connection *c, const char *player_name);
 
+static void ResourceCommandHandler(
+    Connection *c,
+    const char *player_name,
+    const char *message,
+    ResourceType type,
+    const char *name
+);
+
 
 void SuperUserAccess(Connection *c,
                      const char *player_name,
                      const char *new_admin)
 {
-	
-	/*
+    if (!c || !player_name || !new_admin)
+        return;
+
     // Only current admin may change admin 
     if (strcmp(player_name, c->bot.admin_name) != 0)
     {
@@ -48,7 +57,6 @@ void SuperUserAccess(Connection *c,
         );
         return;
     }
-    */
 
     snprintf(c->bot.admin_name,
              sizeof(c->bot.admin_name),
@@ -65,6 +73,7 @@ void SuperUserAccess(Connection *c,
 }
 
 void command_handler(Connection *c, const char *player_name, const char *message) {
+	if (!c || !player_name || !message) return;
 	if (c->bot.command_prefix == 0) return;
 	
 	if (message[0] != c->bot.command_prefix) return;

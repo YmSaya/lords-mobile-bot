@@ -103,7 +103,7 @@ void logger(Connection *c) {
 	for (int i = 0; i < c->alliance_member.count; i++) {
 		AllianceMember *m = &c->alliance_member.member[i];
 		
-		printf("id: %ld, ", m->user_id);
+		printf("id: %lld, ", (long long)m->user_id);
 		// printf("head: %u\n",     m->head);
 		printf("name: %s\n",     m->name);
 		// printf("rank: %u\n",     m->rank);
@@ -138,31 +138,38 @@ void ProcessConnection(Connection *c)
 		}
 		*/
 		
-		int n = recv(c->sock, s->buffer + s->read_pos, BUFFER_SIZE - s->read_pos, 0);
-		
-		if (n > 0) {
-			s->read_pos += n;
-		}
-		else if (n == 0) {
-			LOGI("Disconnected\n");
-			break;
-		}
-		else {
-			// non-blocking case
+		if (s->read_pos < BUFFER_SIZE) {
+			int n = recv(c->sock, s->buffer + s->read_pos, (int)(BUFFER_SIZE - s->read_pos), 0);
+			
+			if (n > 0) {
+				s->read_pos += n;
+			}
+			else if (n == 0) {
+				LOGI("Disconnected\n");
+				break;
+			}
+			else {
+				// non-blocking case
 #ifdef _WIN32
-			if (WSAGetLastError() == WSAEWOULDBLOCK) {
-				Sleep(1);
-				continue; // no more data right now
-			}
+				if (WSAGetLastError() == WSAEWOULDBLOCK) {
+					Sleep(1);
+					continue;
+				}
+				else {
+					LOGE("Recv error\n");
+					break;
+				}
 #else
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				usleep(1000);
-				continue; // no more data right now
-			}
+				if (errno == EAGAIN || errno == EWOULDBLOCK) {
+					usleep(1000);
+					continue;
+				}
+				else {
+					LOGE("Recv error\n");
+					break;
+				}
 #endif
-
-			LOGE("Recv error\n");
-			break;
+			}
 		}
 		
 		while (s->read_pos - s->parse_pos >= 4) {
@@ -429,177 +436,16 @@ void ProcessConnection(Connection *c)
 			s->read_pos -= s->parse_pos;
 			s->parse_pos = 0;
 		}
+		else if (s->read_pos >= BUFFER_SIZE) {
+			// Buffer is full but no packet was parsed; discard 1 byte to prevent deadlock
+			memmove(s->buffer, s->buffer + 1, s->read_pos - 1);
+			s->read_pos -= 1;
+		}
 	}
 }
  
 
-// Configuration settings 
-void Configuration(Connection *client)
-{
-	
-	// Default settings
-	// Command prefix
-	client->bot.command_prefix = '$';
-	// Data folder 
-	strcpy(client->bot.data_path, "./lmbot/");
-	// default admin
-	strcpy(client->bot.admin_name, "halloweeks");
-	
-	/*
-	client->lobby_server_addr = 0;
-	client->lobby_server_port = 0;
-	
-	client->game_server_addr = 0;
-	client->game_server_port = 0;
-	*/
-	
-	// Game Version And Language
-	client->app.version_major = 2;
-	client->app.version_minor = 197;
-	client->app.version_patch = 307;
-	client->app.language_code = 1;   // g_config.language_code;
-	
-	
-	
-	
-	
-	// client->cargo_ship.settings.auto_trade = true;
-	
-	
-	// Automatically purchase desired Black Market (Cargo ship) items.
-	client->market.settings.auto_trade = true;
-	
-	// Minimum resources to keep after market purchases.
-	client->market.reserve.food = 0;
-	client->market.reserve.rock = 0;
-	client->market.reserve.wood = 0;
-	client->market.reserve.ore  = 0;
-	client->market.reserve.gold = 0;
-	
-	// Allow these resources to be spent on Black Market trades.
-	client->market.settings.spend_food = true;
-	client->market.settings.spend_rock = true;
-	client->market.settings.spend_wood = true;
-	client->market.settings.spend_ore  = true;
-	client->market.settings.spend_gold = true;
-	
-	// Guild Auto help
-	client->alliance.auto_help = true;
-	
-	// Open alliance gifts
-	client->alliance.auto_open_gifts = true; // Guild Gift will not open auto if set false 
-	
-	
-	// Master switch for the protection system.
-	client->protection.enabled = true;
-	
-	/* Shield */
-	client->protection.shield_always_on = false; // shield 24/7
-	client->protection.shield_on_incoming_attack = true; // shield when army invading 
-	client->protection.shield_on_incoming_scout = true; // shield when scout approach
-	
-	/* Shield priority order.
-	 * The bot tries shields from highest priority to lowest priority.
-	 * If the first shield is unavailable, it falls back to the next available shield.
-	 */
-	client->protection.shield_priority_count = 4;
-	client->protection.shield_priority[0] = SHIELD_4H;  // Priority 1
-	client->protection.shield_priority[1] = SHIELD_8H;  // Priority 2
-	client->protection.shield_priority[2] = SHIELD_12H; // Priority 3
-	client->protection.shield_priority[3] = SHIELD_1D;  // Priority 4
-	
-	// Additional shields available for fallback.
-	// Currently not included in the priority list above.
-	client->protection.shield_priority[4] = SHIELD_3D;
-	client->protection.shield_priority[5] = SHIELD_7D;
-	client->protection.shield_priority[6] = SHIELD_14D;
-	
-	/* Troop recall */
-	// Recalls targeted camped or gathering troops.
-	client->protection.recall_on_incoming_attack = true;
-	client->protection.recall_on_incoming_scout = true;
-	
-	// Automatically recalls a gathering or camp march before it reaches
-	// its destination when an incoming conflict is detected.
-	// Requires Withdraw Squad items; otherwise no action is taken.
-	client->protection.recall_on_incoming_conflict = true;
-	
-	// client->protection.shelter_always = false;
-	// client->protection.shelter_leader = true;
-	// client->protection.shelter_troops = false;
-	// client->protection.shelter_on_incoming_attack = true;
-	// client->protection.shelter_on_incoming_scout = true;
-	
-	/*
-	 * Darknest Configuration 
-	 * Automatic Darknest settings
-	 * Currently core logic not implemented yet
-	 */ 
-	client->darknest.auto_join = true;
-	client->darknest.min_level = 4;
-	client->darknest.max_level = 6;
-	
-	// Maximum number of marches the bot can use for Darknest rallies at the same time (if available)
-	client->darknest.max_march = 2;
-	
-	// Automatically set Darknest essence in Transmutation Lab
-	client->darknest.auto_transmute = true;
-	
-	// Desired essence level
-	client->darknest.essence_level = 18;
-	
-	// Do not join if the rally host is more than 200 miles away.
-	client->darknest.max_distance = 200; 
-	
-	// Total troops to send when joining Darknest rally.
-	client->darknest.troop_count = 200000;
-	
-	// Minimum troops required; if available troops cannot reach this, do not join.
-	client->darknest.min_join_troops = 150000;
-	
-	client->darknest.formation_mode = DARKNEST_FORMATION_LEADER;
-	
-	// Used only when formation_mode == DARKNEST_FORMATION_FIXED
-	// Troop ratio (8480 = 80% Inf, 40% Ranged, 80% Cavalry, 0% Siege).
-	client->darknest.formation = 8480;
-	
-	// Join random delay between.
-	client->darknest.min_join_delay = 3;
-	client->darknest.max_join_delay = 180;
-	
-	// Darknest troop priority order: bot tries higher tier troops first (T5 → T1) when selecting troops for rally join.
-	client->darknest.tier_priority_count = 3;
-	client->darknest.tier_order[0] = TIER_T5; // T5
-	client->darknest.tier_order[1] = TIER_T4;
-	client->darknest.tier_order[2] = TIER_T3;
-	client->darknest.tier_order[3] = TIER_T2;
-	client->darknest.tier_order[4] = TIER_T1;
-	
-	
-	// currently no banking system implemented 
-	client->bank.enabled   = true;
-	client->bank.send_food = true;
-	client->bank.send_rock = true;
-	client->bank.send_wood = true;
-	client->bank.send_ore  = true;
-	client->bank.send_gold = true;
-	
-	client->bank.reserve.food = 0;
-	client->bank.reserve.rock = 0;
-	client->bank.reserve.wood = 0;
-	client->bank.reserve.ore  = 0;
-	client->bank.reserve.gold = 0;
-	
-	client->bank.max_delivery_distance = 100;
-	
-	client->bank.use_bag_rss  = false;
-	client->bank.use_bag_food = false;
-	client->bank.use_bag_rock = false;
-	client->bank.use_bag_wood = false;
-	client->bank.use_bag_ore  = false;
-	client->bank.use_bag_gold = false;
-	
-}
+
 
 void PrintUsage(void)
 {
@@ -628,155 +474,6 @@ void PrintVersion(void)
         __TIME__);
 }
 
-bool CreateDefaultConfig(const char *filename)
-{
-	FILE *fp = fopen(filename, "w");
-	
-	if (!fp)
-		return false;
-	
-	fprintf(fp,
-		"# Lords Mobile Bot Configuration\n"
-		"# Generated automatically. Edit this file to configure the bot.\n"
-		"# Project: https://github.com/halloweeks/lords-mobile-bot\n"
-		"# Docs: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
-		
-		"# Gateway server\n"
-		"server.addr = 192.243.44.63\n"
-		"server.port = 5999\n\n"
-		
-		"# Client version\n"
-		"client.version_major = 2\n"
-		"client.version_minor = 197\n"
-		"client.version_patch = 308\n"
-		"client.language_code = 1\n\n"
-		
-		"# Directory used to store bot data (logs, databases, cache, etc.).\n"
-		"data.path = /sdcard/lmbot/\n\n"
-		
-		"# Privileged player.\n"
-		"# This player can execute administrator commands and bypass normal restrictions.\n"
-		"admin.name = halloweeks\n\n"
-		
-		"# Replace the example values below with your own account information.\n"
-		"account.igg_id = 1234567890\n"
-		"account.device_uuid = 12345678-1234-1234-1234-123456789abc\n"
-		"account.access_key = YOUR_ACCESS_KEY_HERE\n\n"
-		
-		"# Prefix used to identify bot commands.\n"
-		"command.prefix = $\n\n"
-		
-		"# Command channels: WORLD, GUILD, MAIL\n"
-		"command.input = GUILD\n"
-		"command.output = MAIL\n\n"
-		
-		"# Bank\n"
-		"# Master switch for the banking system.\n"
-		"# When enabled, the bot accepts and processes banking commands.\n"
-		"# When disabled, all banking commands are ignored.\n"
-		"bank.enabled = false\n\n"
-		
-		"# Resource types allowed for delivery.\n"
-		"bank.send_food = false\n"
-		"bank.send_rock = false\n"
-		"bank.send_wood = false\n"
-		"bank.send_ore  = false\n"
-		"bank.send_gold = false\n\n"
-		
-		"# Resource reserve.\n"
-		"# These values are reserved for the bot's own use. The bot will not send\n"
-		"# resources that would reduce the balance below these amounts.\n"
-		"bank.reserve_food = 20M\n"
-		"bank.reserve_rock = 50M\n"
-		"bank.reserve_wood = 50M\n"
-		"bank.reserve_ore  = 30M\n"
-		"bank.reserve_gold = 0\n\n"
-		
-		"# Maximum map distance (tiles) for resource delivery.\n"
-		"bank.max_delivery_distance = 100\n\n"
-		
-		"# Automatically use resource items from the bag if the available\n"
-		"# resources are insufficient to fulfill a banking command.\n"
-		"bank.use_bag_rss  = false\n"
-		"bank.use_bag_food = false\n"
-		"bank.use_bag_rock = false\n"
-		"bank.use_bag_wood = false\n"
-		"bank.use_bag_ore  = false\n"
-		"bank.use_bag_gold = false\n\n"
-		
-		/*
-		"# Alliance\n"
-		"alliance.auto_help = false\n"
-		"alliance.auto_open_gifts = false\n\n"
-		*/
-		
-		
-		"# Enable or disable all automatic protection features.\n"
-		"protection.enabled = false\n\n"
-		
-		"# Keep a shield active at all times.\n"
-		"protection.shield_always_on = false\n\n"
-		
-		"# Automatically use a shield when an incoming attack is detected.\n"
-		"protection.shield_on_incoming_attack = false\n\n"
-		
-		"# Automatically use a shield when an incoming scout is detected.\n"
-		"protection.shield_on_incoming_scout = false\n\n"
-		
-		"# Shield priority list.\n"
-		"# The bot will use the first available shield in this order.\n"
-		"# Available shields:\n"
-		"# SHIELD_4H, SHIELD_8H, SHIELD_12H, SHIELD_1D, SHIELD_3D, SHIELD_7D, SHIELD_14D\n"
-		"protection.shield_priority = SHIELD_4H, SHIELD_8H, SHIELD_12H, SHIELD_1D\n"
-		
-		"\n\n# Automatically recall marches when an incoming attack is detected.\n"
-		"protection.recall_on_incoming_attack = false\n\n"
-		
-		"# Automatically recall marches when an incoming scout is detected.\n"
-		"protection.recall_on_incoming_scout = false\n\n"
-		
-		"# Automatically recalls a gathering or camp march before it reaches\n"
-		"# its destination when an incoming conflict is detected.\n"
-		"# Requires Withdraw Squad items; otherwise no action is taken.\n"
-		"protection.recall_on_incoming_conflict = false\n\n"
-		
-		"# Currently this feature not available\n"
-		"# protection.shelter_always = false\n"
-		"# protection.shelter_leader = true\n"
-		"# protection.shelter_troops = false\n"
-		"# protection.shelter_on_incoming_attack = true\n"
-		"# protection.shelter_on_incoming_scout = true\n\n"
-		
-		
-		"# Cargo Ship Trading\n"
-		"# Automatically completes Cargo Ship trades.\n"
-		"# The options below specify which resources the bot is allowed to spend.\n"
-		"cargo_ship.auto_trade  = false\n"
-		"cargo_ship.spend_food  = false\n"
-		"cargo_ship.spend_rock  = false\n"
-		"cargo_ship.spend_wood  = false\n"
-		"cargo_ship.spend_ore   = false\n"
-		"cargo_ship.spend_gold  = false\n\n"
-		
-		"# Use resource items from the bag when required to complete a trade.\n"
-		"# If disabled, the bot will never consume bag resource items.\n"
-		"cargo_ship.use_bag_rss = false\n\n"
-		
-		"# Resource reserve limits.\n"
-		"# The bot always keeps at least this amount and only spends the excess.\n"
-		"# Set to 0 to disable the reserve.\n"
-		"cargo_ship.reserve_food = 10M\n"
-		"cargo_ship.reserve_rock = 10M\n"
-		"cargo_ship.reserve_wood = 10M\n"
-		"cargo_ship.reserve_ore  = 10M\n"
-		"cargo_ship.reserve_gold = 10M\n\n"
-
-	);
-
-    fclose(fp);
-    return true;
-}
-
 int main(int argc, const char *argv[]) {
 	if (argc < 2) {
 		PrintUsage();
@@ -803,6 +500,11 @@ int main(int argc, const char *argv[]) {
 		return 0;
 	}
 
+	if (argc != 2) {
+        printf("Usage: %s <config.cfg>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
 #ifdef _WIN32
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
@@ -811,73 +513,96 @@ int main(int argc, const char *argv[]) {
 	}
 #endif
 	
-	if (argc != 2) {
-        printf("Usage: %s <config.cfg>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
+	Connection *client = calloc(1, sizeof(Connection));
+	if (!client) {
+		LOGE("Failed to allocate memory for Connection\n");
+#ifdef _WIN32
+		WSACleanup();
+#endif
+		return EXIT_FAILURE;
+	}
 	
-	Connection client = {0};
+	Configuration(client);
 	
-	// Configuration(&client);
-	
-	if (!LoadConfig(&client, argv[1])) {
+	if (!LoadConfig(client, argv[1])) {
 		LOGE("Failed to load config\n");
+		free(client);
+#ifdef _WIN32
+		WSACleanup();
+#endif
 		return EXIT_FAILURE;
 	}
 	
 	LOGI("Configuration loaded\n");
 	
 	// Establish TCP connection to server and store socket descriptor in client
-	client.sock = connect_server(client.gateway_server.addr, client.gateway_server.port);
+	client->sock = connect_server(client->gateway_server.addr, client->gateway_server.port);
 	
 	// Validate socket creation; -1 indicates connection failure
-	if (client.sock == -1) {
-		LOGE("Failed to connect to %s:%d\n", client.gateway_server.addr, client.gateway_server.port);
+	if (client->sock == -1) {
+		LOGE("Failed to connect to %s:%d\n", client->gateway_server.addr, client->gateway_server.port);
+		free(client);
+#ifdef _WIN32
+		WSACleanup();
+#endif
 		return EXIT_FAILURE;
 	}
 	
-	LOGI("Connected gateway server: %s:%u\n", client.gateway_server.addr, client.gateway_server.port);
-	LOGI("Game client: v%u.%u.%u\n", client.app.version_major, client.app.version_minor, client.app.version_patch);
+	LOGI("Connected gateway server: %s:%u\n", client->gateway_server.addr, client->gateway_server.port);
+	LOGI("Game client: v%u.%u.%u\n", client->app.version_major, client->app.version_minor, client->app.version_patch);
 	
-	RequestGuestLogIn(&client);
+	RequestGuestLogIn(client);
 		
-	ProcessConnection(&client);
+	ProcessConnection(client);
 	
-	if (!client.lobby_login) {
+	if (!client->lobby_login) {
 		LOGE("Login failed!\n");
+		disconnect(client);
+		free(client);
+#ifdef _WIN32
+		WSACleanup();
+#endif
 		return EXIT_FAILURE;
 	}
 	
 	// Establish TCP connection to game server 
-	client.sock = connect_server(client.game_server.addr, client.game_server.port);
+	client->sock = connect_server(client->game_server.addr, client->game_server.port);
 	
-	if (client.sock == -1) {
-		// LOGE("Failed to connect game server!");
-		LOGE("Failed to connect game server %s:%d\n", client.game_server.addr, client.game_server.port);
+	if (client->sock == -1) {
+		LOGE("Failed to connect game server %s:%d\n", client->game_server.addr, client->game_server.port);
+		free(client);
+#ifdef _WIN32
+		WSACleanup();
+#endif
 		return EXIT_FAILURE;
 	}
 	
-	if (set_nonblocking(&client) != 0) {
+	if (set_nonblocking(client) != 0) {
 		LOGE("set_nonblocking\n");
 	}
 	
-	LOGI("IGG ID: %lu\n", client.auth.igg_id);
+	LOGI("IGG ID: %llu\n", (unsigned long long)client->auth.igg_id);
 	
-	LOGI("Connected game server: %s:%u\n", client.game_server.addr, client.game_server.port);
+	LOGI("Connected game server: %s:%u\n", client->game_server.addr, client->game_server.port);
 	
 	// clear old buffer 
-	memset(&client.stream, 0, sizeof(client.stream));
+	memset(&client->stream, 0, sizeof(client->stream));
 	
 	// Game login
 	LOGI("Logging game server\n");
-	RequestLogIn(&client);
+	RequestLogIn(client);
 	
-	RequestClientInitOver(&client);
+	RequestClientInitOver(client);
 	
 	// Handle 
-	ProcessConnection(&client);
+	ProcessConnection(client);
 	
-	disconnect(&client);
+	disconnect(client);
+	free(client);
+
+#ifdef _WIN32
+	WSACleanup();
+#endif
 	
 	return 0;
 }

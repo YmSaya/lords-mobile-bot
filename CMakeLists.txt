@@ -25,3 +25,28 @@ target_include_directories(client PRIVATE include)
 if(WIN32)
     target_link_libraries(client PRIVATE ws2_32)
 endif()
+
+enable_testing()
+
+add_executable(test_phase1
+    tests/test_phase1.c
+    src/connection.c
+    src/log.c
+    src/protocol.c
+    src/des.c
+    src/map_point.c
+    src/command.c
+    src/config.c
+)
+
+target_compile_definitions(test_phase1 PRIVATE
+    VERSION="${PROJECT_VERSION}"
+)
+
+target_include_directories(test_phase1 PRIVATE include)
+
+if(WIN32)
+    target_link_libraries(test_phase1 PRIVATE ws2_32)
+endif()
+
+add_test(NAME test_phase1 COMMAND test_phase1)

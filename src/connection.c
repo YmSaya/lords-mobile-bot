@@ -53,15 +53,21 @@ bool send_packet(Connection *conn, bool enc)
 
 void disconnect(Connection *c)
 {
-    if (c->sock >= 0)
+    if (!c)
+        return;
+
+    if (c->sock >= 0) {
         close_socket(c->sock);
         c->sock = -1;
+    }
 }
 
 
 void reset_connection(Connection *c)
 {
+    if (!c)
+        return;
+
     c->sock = -1;
-    
-    memset(&c, 0, sizeof(c));
+    memset(c, 0, sizeof(*c));
 }

@@ -203,12 +203,7 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	}
 	
 	if (strcmp(key, "protection.shield_always_on") == 0) {
-		c->protection.enabled = (strcmp(value, "true") == 0);
-		return true;
-	}
-	
-	if (strcmp(key, "protection.shield_always_on") == 0) {
-		c->protection.enabled = (strcmp(value, "true") == 0);
+		c->protection.shield_always_on = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
@@ -224,6 +219,27 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	
 	if (strcmp(key, "protection.shield_priority") == 0) {
 		return ParseShieldPriority(c, value);
+	}
+	
+	if (strcmp(key, "protection.recall_on_incoming_attack") == 0) {
+		c->protection.recall_on_incoming_attack = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	if (strcmp(key, "protection.recall_on_incoming_scout") == 0) {
+		c->protection.recall_on_incoming_scout = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	if (strcmp(key, "protection.recall_on_incoming_conflict") == 0) {
+		c->protection.recall_on_incoming_conflict = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	if (strcmp(key, "data.path") == 0) {
+		strncpy(c->bot.data_path, value, sizeof(c->bot.data_path) - 1);
+		c->bot.data_path[sizeof(c->bot.data_path) - 1] = '\0';
+		return true;
 	}
 	
 	if (strcmp(key, "admin.name") == 0) {
@@ -344,6 +360,246 @@ bool LoadConfig(Connection *c, const char *filename)
 			return false;
 		}
     }
+
+    fclose(fp);
+    return true;
+}
+
+void Configuration(Connection *client)
+{
+	if (!client)
+		return;
+
+	// Default settings
+	// Command prefix
+	client->bot.command_prefix = '$';
+	// Data folder 
+	strcpy(client->bot.data_path, "./lmbot/");
+	// default admin
+	strcpy(client->bot.admin_name, "halloweeks");
+
+	// Game Version And Language
+	client->app.version_major = 2;
+	client->app.version_minor = 197;
+	client->app.version_patch = 307;
+	client->app.language_code = 1;
+
+	// Automatically purchase desired Black Market (Cargo ship) items.
+	client->market.settings.auto_trade = true;
+
+	// Minimum resources to keep after market purchases.
+	client->market.reserve.food = 0;
+	client->market.reserve.rock = 0;
+	client->market.reserve.wood = 0;
+	client->market.reserve.ore  = 0;
+	client->market.reserve.gold = 0;
+
+	// Allow these resources to be spent on Black Market trades.
+	client->market.settings.spend_food = true;
+	client->market.settings.spend_rock = true;
+	client->market.settings.spend_wood = true;
+	client->market.settings.spend_ore  = true;
+	client->market.settings.spend_gold = true;
+
+	// Guild Auto help
+	client->alliance.auto_help = true;
+
+	// Open alliance gifts
+	client->alliance.auto_open_gifts = true;
+
+	// Master switch for the protection system.
+	client->protection.enabled = true;
+
+	/* Shield */
+	client->protection.shield_always_on = false; // shield 24/7
+	client->protection.shield_on_incoming_attack = true; // shield when army invading 
+	client->protection.shield_on_incoming_scout = true; // shield when scout approach
+
+	/* Shield priority order. */
+	client->protection.shield_priority_count = 4;
+	client->protection.shield_priority[0] = SHIELD_4H;  // Priority 1
+	client->protection.shield_priority[1] = SHIELD_8H;  // Priority 2
+	client->protection.shield_priority[2] = SHIELD_12H; // Priority 3
+	client->protection.shield_priority[3] = SHIELD_1D;  // Priority 4
+
+	client->protection.shield_priority[4] = SHIELD_3D;
+	client->protection.shield_priority[5] = SHIELD_7D;
+	client->protection.shield_priority[6] = SHIELD_14D;
+
+	/* Troop recall */
+	client->protection.recall_on_incoming_attack = true;
+	client->protection.recall_on_incoming_scout = true;
+	client->protection.recall_on_incoming_conflict = true;
+
+	/* Darknest Configuration */ 
+	client->darknest.auto_join = true;
+	client->darknest.min_level = 4;
+	client->darknest.max_level = 6;
+	client->darknest.max_march = 2;
+	client->darknest.auto_transmute = true;
+	client->darknest.essence_level = 18;
+	client->darknest.max_distance = 200; 
+	client->darknest.troop_count = 200000;
+	client->darknest.min_join_troops = 150000;
+	client->darknest.formation_mode = DARKNEST_FORMATION_LEADER;
+	client->darknest.formation = 8480;
+	client->darknest.min_join_delay = 3;
+	client->darknest.max_join_delay = 180;
+	client->darknest.tier_priority_count = 3;
+	client->darknest.tier_order[0] = TIER_T5;
+	client->darknest.tier_order[1] = TIER_T4;
+	client->darknest.tier_order[2] = TIER_T3;
+	client->darknest.tier_order[3] = TIER_T2;
+	client->darknest.tier_order[4] = TIER_T1;
+
+	// Bank
+	client->bank.enabled   = true;
+	client->bank.send_food = true;
+	client->bank.send_rock = true;
+	client->bank.send_wood = true;
+	client->bank.send_ore  = true;
+	client->bank.send_gold = true;
+	client->bank.reserve.food = 0;
+	client->bank.reserve.rock = 0;
+	client->bank.reserve.wood = 0;
+	client->bank.reserve.ore  = 0;
+	client->bank.reserve.gold = 0;
+	client->bank.max_delivery_distance = 100;
+	client->bank.use_bag_rss  = false;
+	client->bank.use_bag_food = false;
+	client->bank.use_bag_rock = false;
+	client->bank.use_bag_wood = false;
+	client->bank.use_bag_ore  = false;
+	client->bank.use_bag_gold = false;
+}
+
+bool CreateDefaultConfig(const char *filename)
+{
+	FILE *fp = fopen(filename, "w");
+	if (!fp)
+		return false;
+
+	fprintf(fp,
+		"# Lords Mobile Bot Configuration\n"
+		"# Generated automatically. Edit this file to configure the bot.\n"
+		"# Project: https://github.com/halloweeks/lords-mobile-bot\n"
+		"# Docs: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
+		
+		"# Gateway server\n"
+		"server.addr = 192.243.44.63\n"
+		"server.port = 5999\n\n"
+		
+		"# Client version\n"
+		"client.version_major = 2\n"
+		"client.version_minor = 197\n"
+		"client.version_patch = 308\n"
+		"client.language_code = 1\n\n"
+		
+		"# Directory used to store bot data (logs, databases, cache, etc.).\n"
+		"data.path = /sdcard/lmbot/\n\n"
+		
+		"# Privileged player.\n"
+		"# This player can execute administrator commands and bypass normal restrictions.\n"
+		"admin.name = halloweeks\n\n"
+		
+		"# Replace the example values below with your own account information.\n"
+		"account.igg_id = 1234567890\n"
+		"account.device_uuid = 12345678-1234-1234-1234-123456789abc\n"
+		"account.access_key = YOUR_ACCESS_KEY_HERE\n\n"
+		
+		"# Prefix used to identify bot commands.\n"
+		"command.prefix = $\n\n"
+		
+		"# Command channels: WORLD, GUILD, MAIL\n"
+		"command.input = GUILD\n"
+		"command.output = MAIL\n\n"
+		
+		"# Bank\n"
+		"# Master switch for the banking system.\n"
+		"# When enabled, the bot accepts and processes banking commands.\n"
+		"# When disabled, all banking commands are ignored.\n"
+		"bank.enabled = false\n\n"
+		
+		"# Resource types allowed for delivery.\n"
+		"bank.send_food = false\n"
+		"bank.send_rock = false\n"
+		"bank.send_wood = false\n"
+		"bank.send_ore  = false\n"
+		"bank.send_gold = false\n\n"
+		
+		"# Resource reserve.\n"
+		"# These values are reserved for the bot's own use. The bot will not send\n"
+		"# resources that would reduce the balance below these amounts.\n"
+		"bank.reserve_food = 20M\n"
+		"bank.reserve_rock = 50M\n"
+		"bank.reserve_wood = 50M\n"
+		"bank.reserve_ore  = 30M\n"
+		"bank.reserve_gold = 0\n\n"
+		
+		"# Maximum map distance (tiles) for resource delivery.\n"
+		"bank.max_delivery_distance = 100\n\n"
+		
+		"# Automatically use resource items from the bag if the available\n"
+		"# resources are insufficient to fulfill a banking command.\n"
+		"bank.use_bag_rss  = false\n"
+		"bank.use_bag_food = false\n"
+		"bank.use_bag_rock = false\n"
+		"bank.use_bag_wood = false\n"
+		"bank.use_bag_ore  = false\n"
+		"bank.use_bag_gold = false\n\n"
+		
+		"# Enable or disable all automatic protection features.\n"
+		"protection.enabled = false\n\n"
+		
+		"# Keep a shield active at all times.\n"
+		"protection.shield_always_on = false\n\n"
+		
+		"# Automatically use a shield when an incoming attack is detected.\n"
+		"protection.shield_on_incoming_attack = false\n\n"
+		
+		"# Automatically use a shield when an incoming scout is detected.\n"
+		"protection.shield_on_incoming_scout = false\n\n"
+		
+		"# Shield priority list.\n"
+		"# The bot will use the first available shield in this order.\n"
+		"# Available shields:\n"
+		"# SHIELD_4H, SHIELD_8H, SHIELD_12H, SHIELD_1D, SHIELD_3D, SHIELD_7D, SHIELD_14D\n"
+		"protection.shield_priority = SHIELD_4H, SHIELD_8H, SHIELD_12H, SHIELD_1D\n"
+		
+		"\n\n# Automatically recall marches when an incoming attack is detected.\n"
+		"protection.recall_on_incoming_attack = false\n\n"
+		
+		"# Automatically recall marches when an incoming scout is detected.\n"
+		"protection.recall_on_incoming_scout = false\n\n"
+		
+		"# Automatically recalls a gathering or camp march before it reaches\n"
+		"# its destination when an incoming conflict is detected.\n"
+		"# Requires Withdraw Squad items; otherwise no action is taken.\n"
+		"protection.recall_on_incoming_conflict = false\n\n"
+		
+		"# Cargo Ship Trading\n"
+		"# Automatically completes Cargo Ship trades.\n"
+		"# The options below specify which resources the bot is allowed to spend.\n"
+		"cargo_ship.auto_trade  = false\n"
+		"cargo_ship.spend_food  = false\n"
+		"cargo_ship.spend_rock  = false\n"
+		"cargo_ship.spend_wood  = false\n"
+		"cargo_ship.spend_ore   = false\n"
+		"cargo_ship.spend_gold  = false\n\n"
+		
+		"# Use resource items from the bag when required to complete a trade.\n"
+		"# If disabled, the bot will never consume bag resource items.\n"
+		"cargo_ship.use_bag_rss = false\n\n"
+		
+		"# Resource reserve limits.\n"
+		"# The bot always keeps at least this amount and only spends the excess.\n"
+		"# Set to 0 to disable the reserve.\n"
+		"cargo_ship.reserve_food = 10M\n"
+		"cargo_ship.reserve_rock = 10M\n"
+		"cargo_ship.reserve_wood = 10M\n"
+		"cargo_ship.reserve_ore  = 10M\n"
+		"cargo_ship.reserve_gold = 10M\n\n"
+	);
 
     fclose(fp);
     return true;
