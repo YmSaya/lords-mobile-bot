@@ -23,6 +23,7 @@
 #include "items.h"
 
 #include "config.h"
+#include "cli.h"
 
 #include "version.h"
 
@@ -57,6 +58,8 @@ void dump_data(const char *filename, const char *str, void *data, size_t size) {
 
 void BotTick(Connection *c)
 {
+	CLI_Tick(c);
+
 	if (c->server_time == 0) return;
 	
 	// Connection maintenance
@@ -127,6 +130,11 @@ void ProcessConnection(Connection *c)
 	while (1) {
 		// Tick 
 		BotTick(c);
+		
+		if (!c->running) {
+			LOGI("Exiting main loop by user request...\n");
+			break;
+		}
 		
 		/*
 		time_t now = time(NULL);
@@ -535,12 +543,17 @@ int main(int argc, const char *argv[]) {
 	
 	LOGI("Configuration loaded\n");
 	
+	strncpy(client->config_path, argv[1], sizeof(client->config_path) - 1);
+	client->config_path[sizeof(client->config_path) - 1] = '\0';
+	CLI_Init(client);
+
 	// Establish TCP connection to server and store socket descriptor in client
 	client->sock = connect_server(client->gateway_server.addr, client->gateway_server.port);
 	
 	// Validate socket creation; -1 indicates connection failure
 	if (client->sock == -1) {
 		LOGE("Failed to connect to %s:%d\n", client->gateway_server.addr, client->gateway_server.port);
+		CLI_Cleanup(client);
 		free(client);
 #ifdef _WIN32
 		WSACleanup();
@@ -555,8 +568,19 @@ int main(int argc, const char *argv[]) {
 		
 	ProcessConnection(client);
 	
+	if (!client->running) {
+		CLI_Cleanup(client);
+		disconnect(client);
+		free(client);
+#ifdef _WIN32
+		WSACleanup();
+#endif
+		return 0;
+	}
+
 	if (!client->lobby_login) {
 		LOGE("Login failed!\n");
+		CLI_Cleanup(client);
 		disconnect(client);
 		free(client);
 #ifdef _WIN32
@@ -570,6 +594,7 @@ int main(int argc, const char *argv[]) {
 	
 	if (client->sock == -1) {
 		LOGE("Failed to connect game server %s:%d\n", client->game_server.addr, client->game_server.port);
+		CLI_Cleanup(client);
 		free(client);
 #ifdef _WIN32
 		WSACleanup();
@@ -597,6 +622,7 @@ int main(int argc, const char *argv[]) {
 	// Handle 
 	ProcessConnection(client);
 	
+	CLI_Cleanup(client);
 	disconnect(client);
 	free(client);
 

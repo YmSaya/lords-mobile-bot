@@ -68,6 +68,6 @@ void reset_connection(Connection *c)
     if (!c)
         return;
 
-    c->sock = -1;
     memset(c, 0, sizeof(*c));
+    c->sock = -1;
 }

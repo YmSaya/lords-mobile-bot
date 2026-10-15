@@ -21,6 +21,7 @@
   #include <sys/socket.h>
   #include <netinet/in.h>
   #include <fcntl.h>
+  #include <pthread.h>
   #define close_socket close
 #endif
 
@@ -57,6 +58,30 @@ typedef struct {
 	uint16_t offset;
 } Stream;*/
 
+
+#define MAX_WHITELIST_PLAYERS 16
+#define MAX_PLAYER_NAME_LEN 32
+
+typedef enum {
+    BOT_MODE_NORMAL = 0,
+    BOT_MODE_HARVEST = 1
+} BotMode;
+
+#define CLI_MAX_CMD_LEN 256
+#define CLI_QUEUE_CAPACITY 64
+
+typedef struct {
+    char items[CLI_QUEUE_CAPACITY][CLI_MAX_CMD_LEN];
+    int head;
+    int tail;
+    int count;
+#ifdef _WIN32
+    CRITICAL_SECTION lock;
+#else
+    pthread_mutex_t lock;
+#endif
+    bool initialized;
+} CommandQueue;
 
 #define MAX_ITEM_COUNT 65536
 
@@ -916,6 +941,21 @@ typedef struct {
 	ResourceTransfer transfer;
 	
 	AllianceMemberList alliance_member;
+
+	// Operation mode and whitelist
+	BotMode mode;
+	char whitelist[MAX_WHITELIST_PLAYERS][MAX_PLAYER_NAME_LEN];
+	uint8_t whitelist_count;
+
+	// CLI and runtime state
+	bool running;
+	char config_path[256];
+	CommandQueue cmd_queue;
+#ifdef _WIN32
+	HANDLE cli_thread;
+#else
+	pthread_t cli_thread;
+#endif
 } Connection;
 
 /* API */

@@ -18,8 +18,115 @@
 
 #include "config.h"
 #include <stdlib.h>
-
+#include <string.h>
 #include <ctype.h>
+#ifndef _WIN32
+  #include <strings.h>
+#endif
+
+char *TrimWhitespace(char *str)
+{
+    if (!str)
+        return NULL;
+
+    while (*str && isspace((unsigned char)*str)) {
+        str++;
+    }
+
+    if (*str == '\0')
+        return str;
+
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) {
+        *end = '\0';
+        end--;
+    }
+
+    return str;
+}
+
+bool ParseWhitelist(Connection *c, const char *value)
+{
+    if (!c)
+        return false;
+
+    c->whitelist_count = 0;
+    memset(c->whitelist, 0, sizeof(c->whitelist));
+
+    if (!value || value[0] == '\0')
+        return true;
+
+    const char *p = value;
+    while (*p && c->whitelist_count < MAX_WHITELIST_PLAYERS) {
+        /* Skip leading whitespace before candidate name */
+        while (*p && isspace((unsigned char)*p))
+            p++;
+
+        if (*p == '\0')
+            break;
+
+        const char *comma = strchr(p, ',');
+        const char *end = comma ? comma : (p + strlen(p));
+
+        /* Trim trailing whitespace from candidate segment */
+        while (end > p && isspace((unsigned char)*(end - 1)))
+            end--;
+
+        size_t len = (size_t)(end - p);
+        if (len > 0) {
+            if (len >= MAX_PLAYER_NAME_LEN)
+                len = MAX_PLAYER_NAME_LEN - 1;
+
+            memcpy(c->whitelist[c->whitelist_count], p, len);
+            c->whitelist[c->whitelist_count][len] = '\0';
+            c->whitelist_count++;
+        }
+
+        if (!comma)
+            break;
+        p = comma + 1;
+    }
+
+    return true;
+}
+
+bool IsPlayerWhitelisted(const Connection *c, const char *player_name)
+{
+    if (!c || !player_name)
+        return false;
+
+    if (c->whitelist_count == 0)
+        return false;
+
+    const char *p = player_name;
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (*p == '\0')
+        return false;
+
+    size_t len = strlen(p);
+    while (len > 0 && isspace((unsigned char)p[len - 1]))
+        len--;
+
+    if (len == 0)
+        return false;
+
+    for (uint8_t i = 0; i < c->whitelist_count; i++) {
+        size_t wlen = strlen(c->whitelist[i]);
+        if (wlen == len) {
+#ifdef _WIN32
+            if (_strnicmp(c->whitelist[i], p, len) == 0)
+                return true;
+#else
+            if (strncasecmp(c->whitelist[i], p, len) == 0)
+                return true;
+#endif
+        }
+    }
+
+    return false;
+}
 
 static CommandChannel ParseCommandChannel(const char *value)
 {
@@ -318,6 +425,10 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 		return true;
 	}
 	
+	if (strcmp(key, "whitelist.players") == 0) {
+		return ParseWhitelist(c, value);
+	}
+	
 	return true;
 }
 
@@ -328,6 +439,11 @@ bool LoadConfig(Connection *c, const char *filename)
 	if (!fp) {
 		return false;
 	}
+
+	if (c && filename && c->config_path != filename) {
+		strncpy(c->config_path, filename, sizeof(c->config_path) - 1);
+		c->config_path[sizeof(c->config_path) - 1] = '\0';
+	}
 	
 	char line[512];
 	char key[64], value[512];
@@ -336,23 +452,46 @@ bool LoadConfig(Connection *c, const char *filename)
 	while (fgets(line, sizeof(line), fp)) {
 		line_num++;
 		
+		char *p = line;
+		while (*p && isspace((unsigned char)*p))
+			p++;
+
 		/* Skip blank lines */
-		if (line[0] == '\n' || line[0] == '\r') 
+		if (*p == '\0' || *p == '\n' || *p == '\r') 
 			continue;
 		
 		/* Skip comments */
-		if (line[0] == '#' || line[0] == ';' || (line[0] == '/' && line[1] == '/')) 
+		if (*p == '#' || *p == ';' || (*p == '/' && *(p + 1) == '/')) 
 			continue;
 		
-		if (sscanf(line, " %63[^=]= %511[^\n]", key, value) != 2) {
+		char *eq = strchr(p, '=');
+		if (!eq) {
 			line[strcspn(line, "\r\n")] = '\0';
 			printf("%s:%u: error: unexpected syntax: %s\n", filename, line_num, line);
 			fclose(fp);
 			return false;
 		}
-		
-		key[strcspn(key, " \t")] = '\0';
-		value[strcspn(value, "\r\n")] = '\0';	
+
+		*eq = '\0';
+		char *k = TrimWhitespace(p);
+		char *v = TrimWhitespace(eq + 1);
+
+		if (!k || k[0] == '\0') {
+			line[strcspn(line, "\r\n")] = '\0';
+			printf("%s:%u: error: unexpected syntax: %s\n", filename, line_num, line);
+			fclose(fp);
+			return false;
+		}
+
+		strncpy(key, k, sizeof(key) - 1);
+		key[sizeof(key) - 1] = '\0';
+
+		if (v) {
+			strncpy(value, v, sizeof(value) - 1);
+			value[sizeof(value) - 1] = '\0';
+		} else {
+			value[0] = '\0';
+		}
 		
 		if (ParserConfig(c, key, value) != true) {
 			printf("%s:%u: error: `%s`\n", filename, line_num, value);
@@ -365,10 +504,62 @@ bool LoadConfig(Connection *c, const char *filename)
     return true;
 }
 
+bool ReloadConfig(Connection *c, const char *filename)
+{
+    if (!c)
+        return false;
+
+    const char *path = (filename && filename[0] != '\0') ? filename : (c->config_path[0] ? c->config_path : "config.cfg");
+
+    Connection *temp = calloc(1, sizeof(Connection));
+    if (!temp)
+        return false;
+
+    Configuration(temp);
+
+    if (!LoadConfig(temp, path)) {
+        free(temp);
+        return false;
+    }
+
+    // Apply configuration updates safely without disrupting active network or auth
+    memcpy(c->whitelist, temp->whitelist, sizeof(c->whitelist));
+    c->whitelist_count = temp->whitelist_count;
+
+    c->protection = temp->protection;
+    c->market = temp->market;
+    c->bank = temp->bank;
+    c->alliance = temp->alliance;
+    c->darknest = temp->darknest;
+    c->app = temp->app;
+
+    c->bot.command_prefix = temp->bot.command_prefix;
+    c->bot.command_input = temp->bot.command_input;
+    c->bot.command_output = temp->bot.command_output;
+    strncpy(c->bot.admin_name, temp->bot.admin_name, sizeof(c->bot.admin_name) - 1);
+    c->bot.admin_name[sizeof(c->bot.admin_name) - 1] = '\0';
+    strncpy(c->bot.data_path, temp->bot.data_path, sizeof(c->bot.data_path) - 1);
+    c->bot.data_path[sizeof(c->bot.data_path) - 1] = '\0';
+
+    if (c->config_path != path) {
+        strncpy(c->config_path, path, sizeof(c->config_path) - 1);
+        c->config_path[sizeof(c->config_path) - 1] = '\0';
+    }
+
+    free(temp);
+    return true;
+}
+
 void Configuration(Connection *client)
 {
 	if (!client)
 		return;
+
+	// Operation mode and Whitelist
+	client->mode = BOT_MODE_NORMAL;
+	client->whitelist_count = 0;
+	memset(client->whitelist, 0, sizeof(client->whitelist));
+	client->running = true;
 
 	// Default settings
 	// Command prefix
@@ -501,6 +692,9 @@ bool CreateDefaultConfig(const char *filename)
 		"# Privileged player.\n"
 		"# This player can execute administrator commands and bypass normal restrictions.\n"
 		"admin.name = halloweeks\n\n"
+		
+		"# Whitelist of main/authorized player accounts (comma-separated, internal spaces preserved)\n"
+		"whitelist.players = King Arthur, My Farm 01\n\n"
 		
 		"# Replace the example values below with your own account information.\n"
 		"account.igg_id = 1234567890\n"
