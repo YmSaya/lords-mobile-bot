@@ -606,6 +606,9 @@ typedef struct {
     bool recall_on_incoming_scout;
     
     bool recall_on_incoming_conflict;
+
+    // Timezone offset in hours (default: 8 for UTC+08:00)
+    int8_t timezone_offset;
 } ProtectionSettings;
 
 /*
@@ -632,6 +635,88 @@ typedef enum {
     TIER_T4 = 3,
     TIER_T5 = 4
 } TroopTier;
+
+typedef enum {
+    T1_INFANTRY = 0,
+    T1_RANGED   = 1,
+    T1_CAVALRY  = 2,
+    T1_SIEGE    = 3,
+    T2_INFANTRY = 4,
+    T2_RANGED   = 5,
+    T2_CAVALRY  = 6,
+    T2_SIEGE    = 7,
+    T3_INFANTRY = 8,
+    T3_RANGED   = 9,
+    T3_CAVALRY  = 10,
+    T3_SIEGE    = 11,
+    T4_INFANTRY = 12,
+    T4_RANGED   = 13,
+    T4_CAVALRY  = 14,
+    T4_SIEGE    = 15
+} TroopSlot;
+
+typedef enum {
+    PK_NONE = 0,
+    PK_FOOD,
+    PK_STONE,
+    PK_IRON,
+    PK_WOOD,
+    PK_GOLD,
+    PK_CRYSTAL,
+    PK_SP_MINE,
+    PK_CITY,
+    PK_CAMP,
+    PK_NPC,
+    PK_YOLK,
+    PK_DYNAMIC_OBSTACLE,
+    PK_UNDEFINED,
+    PK_MAX
+} POINT_KIND;
+
+#define MAX_MAP_TILES 512
+#define MAX_MARCHES 8
+#define MIN_GATHER_RESOURCES 1000
+
+typedef enum {
+    MARCH_STATE_IDLE = 0,
+    MARCH_STATE_OUTGOING,
+    MARCH_STATE_GATHERING,
+    MARCH_STATE_RETURNING,
+    MARCH_STATE_ARRIVED
+} MarchState;
+
+typedef struct {
+    uint8_t index;
+    bool active;
+    MarchState state;
+    uint16_t target_x;
+    uint16_t target_y;
+    uint8_t resource_type;
+    uint32_t total_troops;
+    uint32_t payload;
+    uint32_t troops[16];
+    uint64_t start_time;
+    uint64_t arrive_time;
+    uint64_t gather_finish_time;
+    uint64_t return_time;
+} March;
+
+typedef struct {
+    uint16_t x;
+    uint16_t y;
+    uint8_t kind;
+    uint8_t level;
+    uint32_t remaining_resources;
+    uint32_t max_resources;
+    bool is_occupied;
+    char owner_name[MAX_PLAYER_NAME_LEN];
+} ResourceTile;
+
+typedef struct {
+    uint32_t troops[16];
+    uint32_t total_troops;
+    uint32_t total_payload;
+} TroopDispatch;
 
 typedef enum {
     DARKNEST_FORMATION_FIXED,
@@ -956,6 +1041,18 @@ typedef struct {
 #else
 	pthread_t cli_thread;
 #endif
+
+	// Phase 3: Smart Shield alert and Shelter defense states
+	bool shield_alert_24h_active;
+	bool troops_in_shelter;
+	uint64_t shelter_expire_time;
+
+	// Phase 4: Map scan, precision gathering, and march tracking
+	bool gather_enabled;
+	bool gather_paused;
+	uint16_t tile_count;
+	ResourceTile tiles[MAX_MAP_TILES];
+	March marches[MAX_MARCHES];
 } Connection;
 
 /* API */

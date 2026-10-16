@@ -422,7 +422,7 @@ static void test_command_queue_thread_safety(void)
 {
     printf("[TEST] Testing thread-safe command queue (single and multi-threaded)...\n");
 
-    CommandQueue q;
+    CommandQueue q = {0};
     CommandQueue_Init(&q);
 
     /* FIFO ordering test */

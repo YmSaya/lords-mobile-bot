@@ -343,6 +343,11 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 		return true;
 	}
 	
+	if (strcmp(key, "protection.timezone_offset") == 0) {
+		c->protection.timezone_offset = (int8_t)atoi(value);
+		return true;
+	}
+	
 	if (strcmp(key, "data.path") == 0) {
 		strncpy(c->bot.data_path, value, sizeof(c->bot.data_path) - 1);
 		c->bot.data_path[sizeof(c->bot.data_path) - 1] = '\0';
@@ -622,6 +627,9 @@ void Configuration(Connection *client)
 	client->protection.recall_on_incoming_scout = true;
 	client->protection.recall_on_incoming_conflict = true;
 
+	/* Timezone offset (default: 8 for UTC+08:00) */
+	client->protection.timezone_offset = 8;
+
 	/* Darknest Configuration */ 
 	client->darknest.auto_join = true;
 	client->darknest.min_level = 4;
@@ -662,6 +670,19 @@ void Configuration(Connection *client)
 	client->bank.use_bag_wood = false;
 	client->bank.use_bag_ore  = false;
 	client->bank.use_bag_gold = false;
+
+	// Phase 4: Auto gather and march tracking
+	client->gather_enabled = true;
+	client->gather_paused = false;
+	client->tile_count = 0;
+	memset(client->tiles, 0, sizeof(client->tiles));
+	memset(client->marches, 0, sizeof(client->marches));
+	for (int i = 0; i < MAX_MARCHES; i++) {
+		client->marches[i].index = (uint8_t)i;
+	}
+	if (client->player.max_marches == 0) {
+		client->player.max_marches = 5;
+	}
 }
 
 bool CreateDefaultConfig(const char *filename)
@@ -770,6 +791,9 @@ bool CreateDefaultConfig(const char *filename)
 		"# its destination when an incoming conflict is detected.\n"
 		"# Requires Withdraw Squad items; otherwise no action is taken.\n"
 		"protection.recall_on_incoming_conflict = false\n\n"
+		
+		"# Timezone offset from UTC in hours (default: 8 for UTC+08:00)\n"
+		"protection.timezone_offset = 8\n\n"
 		
 		"# Cargo Ship Trading\n"
 		"# Automatically completes Cargo Ship trades.\n"

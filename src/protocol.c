@@ -1,11 +1,13 @@
 #include "protocol.h"
 #include "net_rw.h"
 #include "connection.h"
+#include "config.h"
 #include "packet_enum.h"
 #include "map_point.h"
 #include "items.h"
 #include "log.h"
 #include <stdlib.h>
+#include <math.h>
 
 #include <stdarg.h>
 
@@ -906,6 +908,10 @@ void RequestTroopRecall(Connection *c, uint8_t Index) {
     
     // send packet
     send_packet(c, true); // true is encryption flag
+
+    if (c->items[WITHDRAW_SQUAD].quantity > 0) {
+        c->items[WITHDRAW_SQUAD].quantity--;
+    }
 }
 
 
@@ -1227,6 +1233,7 @@ void RecvItemInfo(Connection *c, const uint8_t *data, uint16_t size) {
 	}
 	
 	c->items_loaded = true;
+	UpdateShieldAlertState(c);
 }
 
 const char *FormatTime(uint32_t totalSecs) {
@@ -2533,6 +2540,7 @@ void RecvUseItem(Connection *c, const uint8_t *data, uint16_t size) {
 		
 		// Server returns the updated inventory quantity after using the item.
 		c->items[item_id].quantity = item_quantity;
+		UpdateShieldAlertState(c);
 		
 		if (item_id == ADVANCE_RELOCATOR || item_id == RANDOM_RELOCATOR) {
 			c->player.zone_id            = read_u16(data + offset); offset += 2;
@@ -2655,83 +2663,182 @@ const char *GetShieldName(uint16_t item_id)
 	}
 }
 
+/*
+ * Check if the current time falls within the UTC+08:00 night shield window.
+ * Default period: 00:30 ~ 06:30 (1800s ~ 23400s local time).
+ */
+bool IsNightShieldTime(int8_t timezone_offset, uint64_t current_time)
+{
+    int64_t local_time = (int64_t)current_time + (int64_t)timezone_offset * 3600;
+    int64_t seconds_in_day = local_time % 86400;
+    if (seconds_in_day < 0) {
+        seconds_in_day += 86400;
+    }
+
+    return (seconds_in_day >= 1800 && seconds_in_day <= 23400);
+}
+
+/*
+ * Update 24-hour shield shortage alert state.
+ * If 24h alert is active and 4h or 8h shields have been replenished, clear the alert.
+ */
+void UpdateShieldAlertState(Connection *c)
+{
+    if (!c)
+        return;
+
+    if (c->shield_alert_24h_active) {
+        if (c->items[SHIELD_4H].quantity > 0 || c->items[SHIELD_8H].quantity > 0) {
+            c->shield_alert_24h_active = false;
+            printf("+------------------------------------------------------------------------------+\n");
+            printf("| [SHIELD] Regular 4h/8h shield replenished. 24h shortage alert CLEARED.       |\n");
+            printf("+------------------------------------------------------------------------------+\n");
+        }
+    }
+}
+
+/*
+ * Select and use shield following the strict priority ladder:
+ * 8h item > 4h item > 24h item > 24h crystal purchase (1000 gems).
+ * If 24h item or 24h crystal is used, lock 24h shortage alert state.
+ */
+bool SelectAndUseShield(Connection *c)
+{
+    if (!c)
+        return false;
+
+    UpdateShieldAlertState(c);
+
+    if (c->shield_info.pending)
+        return false;
+
+    // 1. Priority 1: 8-hour shield item
+    if (c->items[SHIELD_8H].quantity > 0) {
+        RequestSimpleUseItem(c, SHIELD_8H, 1);
+        c->items[SHIELD_8H].quantity--;
+        c->shield_info.pending = true;
+        printf("[SHIELD] Consumed 8-hour shield item. Remaining: %u\n", c->items[SHIELD_8H].quantity);
+        return true;
+    }
+
+    // 2. Priority 2: 4-hour shield item
+    if (c->items[SHIELD_4H].quantity > 0) {
+        RequestSimpleUseItem(c, SHIELD_4H, 1);
+        c->items[SHIELD_4H].quantity--;
+        c->shield_info.pending = true;
+        printf("[SHIELD] Consumed 4-hour shield item. Remaining: %u\n", c->items[SHIELD_4H].quantity);
+        return true;
+    }
+
+    // 3. Priority 3: 24-hour shield item (1 day)
+    if (c->items[SHIELD_1D].quantity > 0) {
+        c->shield_alert_24h_active = true;
+        printf("+------------------------------------------------------------------------------+\n");
+        printf("| [ALERT] 24H SHIELD SHORTAGE ALERT ACTIVATED!                                 |\n");
+        printf("| Regular 4h/8h shields are EXHAUSTED. Consuming 24-hour inventory shield.     |\n");
+        printf("+------------------------------------------------------------------------------+\n");
+        RequestSimpleUseItem(c, SHIELD_1D, 1);
+        c->items[SHIELD_1D].quantity--;
+        c->shield_info.pending = true;
+        return true;
+    }
+
+    // 4. Priority 4: 24-hour crystal purchase (1000 gems)
+    if (c->player.gems >= 1000) {
+        c->shield_alert_24h_active = true;
+        printf("+------------------------------------------------------------------------------+\n");
+        printf("| [ALERT] 24H SHIELD SHORTAGE ALERT ACTIVATED!                                 |\n");
+        printf("| Regular 4h/8h/24h item stock EXHAUSTED. Purchasing 24h shield with gems.    |\n");
+        printf("+------------------------------------------------------------------------------+\n");
+        RequestBuyItem(c, 0, 0, SHIELD_1D, 1);
+        c->player.gems -= 1000;
+        c->shield_info.pending = true;
+        return true;
+    }
+
+    printf("[SHIELD] [ERROR] No shields available and insufficient gems for 24h shield!\n");
+    return false;
+}
+
 void UsePriorityShield(Connection *c)
 {
-	// A shield activation request has already been sent.
-	if (c->shield_info.pending)
-		return;
-	
-	for (uint8_t i = 0; i < c->protection.shield_priority_count; i++) {
-		uint16_t item_id = c->protection.shield_priority[i];
-		
-		switch (item_id) {
-			case SHIELD_4H:
-			case SHIELD_8H:
-			case SHIELD_12H:
-			case SHIELD_1D:
-			case SHIELD_3D:
-			case SHIELD_7D:
-			case SHIELD_14D:
-				break;
-			default:
-				continue;
-		}
-		
-		if (c->items[item_id].quantity > 0) {
-			RequestSimpleUseItem(c, item_id, 1);
-			c->shield_info.pending = true;
-			printf("[INFO] Using %s\n", GetShieldName(item_id));
-			return;
-		}
-	}
-	
-	printf("[INFO] No shield items available.\n");
-	return; // No shields available
+    SelectAndUseShield(c);
 }
 
-/*
- * Automatically activate a shield when an enemy scout approaches the
- * turf, if the feature is enabled and no shield is currently active.
- */
-static void WhenEnemyScoutApproachingTurf(Connection *c)
+void WhenEnemyScoutApproachingTurf(Connection *c, const char *attacker_name)
 {
-	// Protection system is disabled.
-	if (!c->protection.enabled)
-		return;
-	
-	// Shielding against incoming scouts is disabled.
-	if (!c->protection.shield_on_incoming_scout)
-		return;
-	
-	// A shield is already active; nothing to do.
-	if (c->shield_info.active)
-		return;
-	
-	// Activate the highest priority shield available.
-	UsePriorityShield(c);
+    if (!c || !c->protection.enabled)
+        return;
+
+    // Whitelist check: allow whitelisted player without shielding
+    if (attacker_name && IsPlayerWhitelisted(c, attacker_name)) {
+        printf("[DEFENSE] Whitelisted player '%s' scout approaching. Allowing scout without shield.\n",
+               attacker_name);
+        return;
+    }
+
+    // Non-whitelisted enemy detected
+    if (c->mode == BOT_MODE_HARVEST) {
+        // Emergency truncation during harvest mode
+        printf("\a");
+        printf("+------------------------------------------------------------------------------+\n");
+        printf("| [EMERGENCY TRUNCATION] UNWHITELISTED ENEMY SCOUT DURING HARVEST MODE!        |\n");
+        printf("| Attacker: %-66.66s |\n", attacker_name ? attacker_name : "Unknown");
+        printf("| Terminating Harvest Mode and activating emergency shield immediately!        |\n");
+        printf("+------------------------------------------------------------------------------+\n");
+
+        c->mode = BOT_MODE_NORMAL;
+        SelectAndUseShield(c);
+        return;
+    }
+
+    if (!c->protection.shield_on_incoming_scout)
+        return;
+
+    if (c->shield_info.active)
+        return;
+
+    printf("[DEFENSE] Unwhitelisted enemy scout detected from '%s'. Activating shield.\n",
+           attacker_name ? attacker_name : "Unknown");
+    SelectAndUseShield(c);
 }
 
-/*
- * Called when an enemy army is detected approaching the turf.
- * If protection is enabled for incoming attacks, activate the selected 
- * priority list shield available.
- */
-static void WhenEnemyArmyApproachingTurf(Connection *c)
+void WhenEnemyArmyApproachingTurf(Connection *c, const char *attacker_name)
 {
-	// Protection system is disabled.
-	if (!c->protection.enabled)
-		return;
-	
-	// Shielding against incoming attacks is disabled.
-	if (!c->protection.shield_on_incoming_attack) 
-		return;
-	
-	// A shield is already active; nothing to do.
-	if (c->shield_info.active)
-		return;
-	
-	// Activate the highest priority shield available.
-    UsePriorityShield(c);
+    if (!c || !c->protection.enabled)
+        return;
+
+    // Whitelist check: allow whitelisted player without shielding
+    if (attacker_name && IsPlayerWhitelisted(c, attacker_name)) {
+        printf("[DEFENSE] Whitelisted player '%s' army approaching. Allowing march without shield.\n",
+               attacker_name);
+        return;
+    }
+
+    // Non-whitelisted enemy detected
+    if (c->mode == BOT_MODE_HARVEST) {
+        // Emergency truncation during harvest mode
+        printf("\a");
+        printf("+------------------------------------------------------------------------------+\n");
+        printf("| [EMERGENCY TRUNCATION] UNWHITELISTED ENEMY ARMY DURING HARVEST MODE!         |\n");
+        printf("| Attacker: %-66.66s |\n", attacker_name ? attacker_name : "Unknown");
+        printf("| Terminating Harvest Mode and activating emergency shield immediately!        |\n");
+        printf("+------------------------------------------------------------------------------+\n");
+
+        c->mode = BOT_MODE_NORMAL;
+        SelectAndUseShield(c);
+        return;
+    }
+
+    if (!c->protection.shield_on_incoming_attack)
+        return;
+
+    if (c->shield_info.active)
+        return;
+
+    printf("[DEFENSE] Unwhitelisted enemy army detected from '%s'. Activating shield.\n",
+           attacker_name ? attacker_name : "Unknown");
+    SelectAndUseShield(c);
 }
 
 
@@ -2795,7 +2902,7 @@ void RecvUpdateWatchTowerAddLineInfo(Connection *c, const uint8_t *data) {
 		case 7:
 			switch (ewatchtower_LINE_TARGET) {
 				case EWATCHTOWER_LINE_TARGET_CAPITAL:
-					WhenEnemyArmyApproachingTurf(c);
+					WhenEnemyArmyApproachingTurf(c, NULL);
 					printf("[WARNING] Enemy army is invading turf\n");
 					break;
 				case EWATCHTOWER_LINE_TARGET_CAMP:
@@ -2840,7 +2947,7 @@ void RecvUpdateWatchTowerAddLineInfo(Connection *c, const uint8_t *data) {
 		case 8: 
 			switch (ewatchtower_LINE_TARGET) {
 				case EWATCHTOWER_LINE_TARGET_CAPITAL:
-					WhenEnemyScoutApproachingTurf(c);
+					WhenEnemyScoutApproachingTurf(c, NULL);
 					printf("[WARNING] Enemy scout approaching to turf\n");
 					break;
 				case EWATCHTOWER_LINE_TARGET_CAMP:
@@ -2903,31 +3010,37 @@ void RecvUpdateWatchTowerAddLineInfo(Connection *c, const uint8_t *data) {
 
 void ShieldTick(Connection *c)
 {
-	if (!c->protection.enabled)
+	if (!c || !c->protection.enabled)
 		return;
-	
-	if (!c->protection.shield_always_on)
+
+	// In harvest mode, routine shield maintenance and night forced shield are suspended
+	if (c->mode == BOT_MODE_HARVEST)
 		return;
-		
-	// Don't make any shield decisions until the server
-	// has told us which buffs are currently active.
+
+	uint64_t now = c->server_time ? c->server_time : (uint64_t)time(NULL);
+	bool is_night = IsNightShieldTime(c->protection.timezone_offset, now);
+
+	// If neither 24/7 shield nor night forced shield schedule is active, return
+	if (!c->protection.shield_always_on && !is_night)
+		return;
+
+	// Check if regular shields have been replenished to clear 24h alert
+	UpdateShieldAlertState(c);
+
+	// Don't make decisions until buff list is loaded
 	if (!c->shield_info.loaded)
 		return;
-	
-	// Already protected?
+
+	// If already protected, check if remaining time is more than 5 minutes (300 seconds)
 	if (c->shield_info.active) {
-		// Still plenty of time remaining.
 		uint64_t end_time = c->shield_info.begin_time + c->shield_info.duration;
-		
-		uint32_t remaining_time = (end_time > c->server_time) ? (uint32_t)(end_time - c->server_time) : 0;
-		
+		uint32_t remaining_time = (end_time > now) ? (uint32_t)(end_time - now) : 0;
+
 		if (remaining_time > 300) // 5 minutes
 			return;
 	}
-	
-	// printf("[SHIELD] Shield expiring soon, renewing...\n");
-	
-	UsePriorityShield(c);
+
+	SelectAndUseShield(c);
 }
 
 void AllianceGiftTick(Connection *c) {
@@ -3223,27 +3336,7 @@ void RecvDarknestBroadcast(Connection *c, const uint8_t *data) {
 }
 
 
-typedef enum {
-    T1_INFANTRY = 0,
-    T1_RANGED   = 1,
-    T1_CAVALRY  = 2,
-    T1_SIEGE    = 3,
-    
-    T2_INFANTRY = 4,
-    T2_RANGED   = 5,
-    T2_CAVALRY  = 6,
-    T2_SIEGE    = 7,
-    
-    T3_INFANTRY = 8,
-    T3_RANGED   = 9,
-    T3_CAVALRY  = 10,
-    T3_SIEGE    = 11,
-    
-    T4_INFANTRY = 12,
-    T4_RANGED   = 13,
-    T4_CAVALRY  = 14,
-    T4_SIEGE    = 15
-} TroopSlot;
+
 
 void DarknestRallyTick(Connection *c)
 {
@@ -4072,25 +4165,12 @@ void RecvAddConflictLine(Connection *c, const uint8_t *data) {
 	if (c->items[WITHDRAW_SQUAD].quantity == 0) return;
 	
 	RequestTroopRecall(c, march_index);
+	if (march_index < MAX_MARCHES && c->marches[march_index].active) {
+		c->marches[march_index].state = MARCH_STATE_RETURNING;
+	}
 }
 
-typedef enum {
-    PK_NONE = 0,
-    PK_FOOD,
-    PK_STONE,
-    PK_IRON,
-    PK_WOOD,
-    PK_GOLD,
-    PK_CRYSTAL,
-    PK_SP_MINE,
-    PK_CITY,
-    PK_CAMP,
-    PK_NPC,
-    PK_YOLK,
-    PK_DYNAMIC_OBSTACLE,
-    PK_UNDEFINED,
-    PK_MAX
-} POINT_KIND;
+/* POINT_KIND is defined in connection.h */
 
 bool IsResources(uint layoutMapInfoID) {
 	return layoutMapInfoID > PK_NONE && layoutMapInfoID < PK_CITY;
@@ -4125,11 +4205,427 @@ void point_kind_str(int pk, char *buf) {
     strcpy(buf, str);
 }
 
+/*
+ * Phase 4: Map scan, precision gathering, and march tracking
+ */
 
-// Not implemented core logic for parse map information
+uint32_t GetSlotPayload(TroopSlot slot) {
+    uint8_t tier = (uint8_t)(slot / 4);
+    uint8_t kind = (uint8_t)(slot % 4);
+    if (kind == 3) { /* Siege */
+        switch (tier) {
+            case 0: return 20;
+            case 1: return 24;
+            case 2: return 28;
+            case 3: return 32;
+            default: return 20;
+        }
+    } else { /* Infantry, Ranged, Cavalry */
+        switch (tier) {
+            case 0: return 8;
+            case 1: return 10;
+            case 2: return 12;
+            case 3: return 15;
+            default: return 8;
+        }
+    }
+}
+
+static uint32_t GetAvailableTroop(const Connection *c, TroopSlot slot) {
+    uint8_t tier = (uint8_t)(slot / 4);
+    uint8_t kind = (uint8_t)(slot % 4);
+    if (tier >= 4) return 0;
+    switch (kind) {
+        case 0: return c->troop.infantry[tier];
+        case 1: return c->troop.ranged[tier];
+        case 2: return c->troop.cavalry[tier];
+        case 3: return c->troop.siege[tier];
+        default: return 0;
+    }
+}
+
 void RecvMapInfoPlus(Connection *c, const uint8_t *data, uint16_t size) {
-	uint16_t offset = 0;
-	
+    if (!c || !data || size < 2) return;
+    uint16_t offset = 0;
+    uint16_t count = read_u16(data + offset); offset += 2;
+    
+    bool fixed_29 = (count > 0 && (size_t)(offset + (size_t)count * 29) <= (size_t)size);
+    
+    c->tile_count = 0;
+    uint16_t parsed = 0;
+    while ((size_t)(offset + 15) <= (size_t)size && parsed < count) {
+        ResourceTile temp;
+        memset(&temp, 0, sizeof(temp));
+        temp.x = read_u16(data + offset); offset += 2;
+        temp.y = read_u16(data + offset); offset += 2;
+        temp.kind = read_u8(data + offset); offset += 1;
+        temp.level = read_u8(data + offset); offset += 1;
+        temp.remaining_resources = read_u32(data + offset); offset += 4;
+        temp.max_resources = read_u32(data + offset); offset += 4;
+        temp.is_occupied = (read_u8(data + offset) != 0); offset += 1;
+        if (fixed_29 && (size_t)(offset + 14) <= (size_t)size) {
+            read_raw(temp.owner_name, data + offset, 14);
+            temp.owner_name[MAX_PLAYER_NAME_LEN - 1] = '\0';
+            offset += 14;
+        } else if (temp.is_occupied && (size_t)(offset + 14) <= (size_t)size &&
+                   (size_t)(offset + 14 + (count - parsed - 1) * 15) <= (size_t)size) {
+            read_raw(temp.owner_name, data + offset, 14);
+            temp.owner_name[MAX_PLAYER_NAME_LEN - 1] = '\0';
+            offset += 14;
+        }
+        parsed++;
+
+        /* Filter to only record valid resource tiles into c->tiles */
+        if (IsResources(temp.kind) && c->tile_count < MAX_MAP_TILES) {
+            c->tiles[c->tile_count++] = temp;
+        }
+    }
+}
+
+double CalculateTileScore(Connection *c, const ResourceTile *tile) {
+    if (!c || !tile) return 0.0;
+    
+    /* Occupied tiles cannot be gathered */
+    if (tile->is_occupied) return 0.0;
+    
+    /* Locked to Lv.1 ~ Lv.2 resource zone */
+    if (tile->level < 1 || tile->level > 2) return 0.0;
+    
+    /* Remaining resources too low: skip */
+    if (tile->remaining_resources < MIN_GATHER_RESOURCES) return 0.0;
+
+    /* Do not target a tile that already has an active march heading to or gathering at it */
+    for (int i = 0; i < MAX_MARCHES; i++) {
+        if (c->marches[i].active && 
+            (c->marches[i].state == MARCH_STATE_OUTGOING || c->marches[i].state == MARCH_STATE_GATHERING) &&
+            c->marches[i].target_x == tile->x && 
+            c->marches[i].target_y == tile->y) {
+            return 0.0;
+        }
+    }
+    
+    /* Type priority weight:
+     * Gem (PK_CRYSTAL) > Gold (PK_GOLD) > Food (PK_FOOD) > Ore (PK_IRON) > Wood (PK_WOOD) > Stone (PK_STONE)
+     * Spaced sufficiently to guarantee strict dominance across Lv.1~Lv.2 resource volumes.
+     */
+    double type_weight = 0.0;
+    switch (tile->kind) {
+        case PK_CRYSTAL: type_weight = 1000000.0; break; /* Gem */
+        case PK_GOLD:    type_weight =  800000.0; break; /* Gold */
+        case PK_FOOD:    type_weight =  600000.0; break; /* Food */
+        case PK_IRON:    type_weight =  400000.0; break; /* Ore */
+        case PK_WOOD:    type_weight =  200000.0; break; /* Wood */
+        case PK_STONE:   type_weight =  100000.0; break; /* Stone */
+        default: return 0.0; /* Not a valid gatherable resource */
+    }
+    
+    /* Determine bot turf position */
+    uint16_t bot_x = 0;
+    uint16_t bot_y = 0;
+    if (c->player.zone_id != 0 || c->player.point_id != 0) {
+        map_pos_t pos = getTileMapPosbyPointCode(c->player.zone_id, c->player.point_id);
+        bot_x = pos.x;
+        bot_y = pos.y;
+    }
+    
+    /* Euclidean distance */
+    double dx = (double)tile->x - (double)bot_x;
+    double dy = (double)tile->y - (double)bot_y;
+    double dist = sqrt(dx * dx + dy * dy);
+    
+    /* Remaining resources bonus (higher remaining = higher score) */
+    double res_bonus = (double)tile->remaining_resources * 0.05;
+    
+    /* Distance decay penalty: closer is better */
+    double score = type_weight + res_bonus - (dist * 15.0);
+    if (score < 0.0) score = 0.0;
+    
+    return score;
+}
+
+const ResourceTile *FindBestResourceTile(Connection *c) {
+    if (!c || c->tile_count == 0) return NULL;
+    
+    const ResourceTile *best_tile = NULL;
+    double max_score = 0.0;
+    
+    for (uint16_t i = 0; i < c->tile_count; i++) {
+        double score = CalculateTileScore(c, &c->tiles[i]);
+        if (score > max_score) {
+            max_score = score;
+            best_tile = &c->tiles[i];
+        }
+    }
+    
+    return best_tile;
+}
+
+bool CalculateGatherTroops(Connection *c, uint32_t needed_payload, TroopDispatch *out_troops) {
+    if (!c || !out_troops || needed_payload == 0) return false;
+    memset(out_troops, 0, sizeof(*out_troops));
+
+    /* Priority dispatch ladder:
+     * 1. T1 Siege (20 payload)
+     * 2. T1 Infantry (8 payload)
+     * 3. T1 Cavalry (8 payload)
+     * 4. T1 Ranged (8 payload)
+     * 5. T2 Siege (24 payload)
+     * 6. T2 Infantry (10 payload)
+     * 7. T2 Cavalry (10 payload)
+     * 8. T2 Ranged (10 payload)
+     * 9. T3 Siege (28 payload)
+     * 10. T3 Infantry (12 payload)
+     * 11. T3 Cavalry (12 payload)
+     * 12. T3 Ranged (12 payload)
+     * 13. T4 Siege (32 payload)
+     * 14. T4 Infantry (15 payload)
+     * 15. T4 Cavalry (15 payload)
+     * 16. T4 Ranged (15 payload)
+     */
+    static const TroopSlot dispatch_ladder[16] = {
+        T1_SIEGE,
+        T1_INFANTRY,
+        T1_CAVALRY,
+        T1_RANGED,
+        T2_SIEGE,
+        T2_INFANTRY,
+        T2_CAVALRY,
+        T2_RANGED,
+        T3_SIEGE,
+        T3_INFANTRY,
+        T3_CAVALRY,
+        T3_RANGED,
+        T4_SIEGE,
+        T4_INFANTRY,
+        T4_CAVALRY,
+        T4_RANGED
+    };
+
+    uint32_t remaining_needed = needed_payload;
+
+    for (int step = 0; step < 16 && remaining_needed > 0; step++) {
+        TroopSlot slot = dispatch_ladder[step];
+        uint32_t unit_cap = GetSlotPayload(slot);
+        uint32_t available = GetAvailableTroop(c, slot);
+        if (available == 0) continue;
+
+        /* Number of units of this slot needed to cover remaining payload */
+        uint32_t units_needed = (remaining_needed + unit_cap - 1) / unit_cap;
+
+        if (available >= units_needed) {
+            out_troops->troops[slot] += units_needed;
+            out_troops->total_troops += units_needed;
+            out_troops->total_payload += units_needed * unit_cap;
+            remaining_needed = 0;
+            break;
+        } else {
+            out_troops->troops[slot] += available;
+            out_troops->total_troops += available;
+            uint32_t p = available * unit_cap;
+            out_troops->total_payload += p;
+            if (p >= remaining_needed) {
+                remaining_needed = 0;
+                break;
+            } else {
+                remaining_needed -= p;
+            }
+        }
+    }
+
+    return (out_troops->total_troops > 0);
+}
+
+bool SendGatherMarch(Connection *c, uint16_t target_x, uint16_t target_y, const TroopDispatch *troops) {
+    if (!c || !troops || troops->total_troops == 0) return false;
+    
+    /* Check harvest mode / gather paused */
+    if (c->gather_paused || c->mode == BOT_MODE_HARVEST) {
+        printf("[GATHER] March dispatch rejected: gathering is paused (Harvest Mode active).\n");
+        return false;
+    }
+    
+    if (!c->gather_enabled) {
+        printf("[GATHER] March dispatch rejected: gathering is disabled.\n");
+        return false;
+    }
+    
+    /* Check maximum march limit */
+    if (c->player.current_marches >= c->player.max_marches) {
+        printf("[GATHER] March dispatch rejected: max march capacity reached (%u/%u).\n",
+               c->player.current_marches, c->player.max_marches);
+        return false;
+    }
+    
+    /* Find an available march slot */
+    int march_idx = -1;
+    for (int i = 0; i < MAX_MARCHES; i++) {
+        if (!c->marches[i].active) {
+            march_idx = i;
+            break;
+        }
+    }
+    if (march_idx == -1) {
+        printf("[GATHER] March dispatch rejected: no free march slot found.\n");
+        return false;
+    }
+    
+    /* Build packet _MSG_REQUEST_TROOPMARCH_NOTATK (6615) */
+    c->size = 2; /* Reserve for size */
+    write_u16(c->data + c->size, _MSG_REQUEST_TROOPMARCH_NOTATK); c->size += 2;
+    write_u32(c->data + c->size, ++c->protocol.seq_id); c->size += 4;
+    write_u16(c->data + c->size, target_x); c->size += 2;
+    write_u16(c->data + c->size, target_y); c->size += 2;
+    write_u8(c->data + c->size, 1); c->size += 1; /* gather march type */
+    
+    /* Write 16 troop counts in Lords Mobile protocol layout:
+     * 4x Infantry (T1..T4), 4x Ranged (T1..T4), 4x Cavalry (T1..T4), 4x Siege (T1..T4)
+     * In TroopSlot enum, slot = tier * 4 + kind.
+     */
+    for (int kind = 0; kind < 4; kind++) {
+        for (int tier = 0; tier < 4; tier++) {
+            TroopSlot slot = (TroopSlot)(tier * 4 + kind);
+            write_u32(c->data + c->size, troops->troops[slot]);
+            c->size += 4;
+        }
+    }
+    
+    write_u16(c->data, c->size);
+    send_packet(c, true);
+    
+    /* Record march */
+    March *m = &c->marches[march_idx];
+    memset(m, 0, sizeof(*m));
+    m->index = (uint8_t)march_idx;
+    m->active = true;
+    m->state = MARCH_STATE_OUTGOING;
+    m->target_x = target_x;
+    m->target_y = target_y;
+    m->total_troops = troops->total_troops;
+    m->payload = troops->total_payload;
+    memcpy(m->troops, troops->troops, sizeof(m->troops));
+    m->start_time = c->server_time ? c->server_time : (uint64_t)time(NULL);
+    
+    /* Deduct dispatched troops from castle stock */
+    for (int i = 0; i < 4; i++) {
+        if (c->troop.infantry[i] >= troops->troops[i * 4 + 0]) c->troop.infantry[i] -= troops->troops[i * 4 + 0];
+        if (c->troop.ranged[i] >= troops->troops[i * 4 + 1])   c->troop.ranged[i]   -= troops->troops[i * 4 + 1];
+        if (c->troop.cavalry[i] >= troops->troops[i * 4 + 2])  c->troop.cavalry[i]  -= troops->troops[i * 4 + 2];
+        if (c->troop.siege[i] >= troops->troops[i * 4 + 3])    c->troop.siege[i]    -= troops->troops[i * 4 + 3];
+    }
+    if (c->troop.total >= troops->total_troops) {
+        c->troop.total -= troops->total_troops;
+    }
+    
+    /* Mark targeted tile in c->tiles as occupied to prevent immediate re-targeting */
+    for (uint16_t i = 0; i < c->tile_count; i++) {
+        if (c->tiles[i].x == target_x && c->tiles[i].y == target_y) {
+            c->tiles[i].is_occupied = true;
+            break;
+        }
+    }
+    
+    c->player.current_marches++;
+    printf("[GATHER] Dispatched gather march #%d to (%u, %u) with %u troops (Payload: %u). Current marches: %u/%u\n",
+           march_idx, target_x, target_y, troops->total_troops, troops->total_payload,
+           c->player.current_marches, c->player.max_marches);
+    
+    return true;
+}
+
+void WhenEnemyApproachingGather(Connection *c, uint16_t target_x, uint16_t target_y, const char *enemy_name) {
+    if (!c) return;
+    
+    /* If approaching player is whitelisted ally/main account, allow without recall */
+    if (enemy_name && IsPlayerWhitelisted(c, enemy_name)) {
+        printf("[COLLISION] Whitelisted player '%s' approaching tile (%u, %u) - no recall triggered.\n",
+               enemy_name, target_x, target_y);
+        return;
+    }
+    
+    /* Check active marches gathering or heading toward target (x, y) */
+    for (int i = 0; i < MAX_MARCHES; i++) {
+        March *m = &c->marches[i];
+        if (m->active && 
+            (m->state == MARCH_STATE_OUTGOING || m->state == MARCH_STATE_GATHERING) &&
+            m->target_x == target_x && m->target_y == target_y) {
+            
+            if (c->items[WITHDRAW_SQUAD].quantity == 0) {
+                printf("[COLLISION ALERT] Hostile '%s' approaching gather tile (%u, %u)! But NO Withdraw Squad items in inventory to recall march #%d!\n",
+                       enemy_name ? enemy_name : "Unknown", target_x, target_y, i);
+                return;
+            }
+
+            printf("[COLLISION ALERT] Hostile '%s' approaching gather tile (%u, %u)! Recalling march #%d immediately!\n",
+                   enemy_name ? enemy_name : "Unknown", target_x, target_y, i);
+            
+            /* Trigger emergency recall */
+            RequestTroopRecall(c, m->index);
+            m->state = MARCH_STATE_RETURNING;
+            break;
+        }
+    }
+}
+
+void OnMarchReturn(Connection *c, uint8_t march_index) {
+    if (!c || march_index >= MAX_MARCHES) return;
+    March *m = &c->marches[march_index];
+    if (!m->active) return;
+    
+    /* Restore troops to castle */
+    for (int i = 0; i < 4; i++) {
+        c->troop.infantry[i] += m->troops[i * 4 + 0];
+        c->troop.ranged[i]   += m->troops[i * 4 + 1];
+        c->troop.cavalry[i]  += m->troops[i * 4 + 2];
+        c->troop.siege[i]    += m->troops[i * 4 + 3];
+    }
+    c->troop.total += m->total_troops;
+    
+    /* Deduct harvested resources from cached tile and clear occupied state */
+    for (uint16_t i = 0; i < c->tile_count; i++) {
+        if (c->tiles[i].x == m->target_x && c->tiles[i].y == m->target_y) {
+            if (c->tiles[i].remaining_resources <= m->payload) {
+                c->tiles[i].remaining_resources = 0;
+            } else {
+                c->tiles[i].remaining_resources -= m->payload;
+            }
+            c->tiles[i].is_occupied = false;
+            break;
+        }
+    }
+    
+    printf("[GATHER] March #%d returned to turf with %u troops.\n", march_index, m->total_troops);
+    m->active = false;
+    m->state = MARCH_STATE_ARRIVED;
+    if (c->player.current_marches > 0) {
+        c->player.current_marches--;
+    }
+    
+    /* Harvest mode collaboration:
+     * If bot is in harvest mode, newly returned troops must be immediately hidden in shelter
+     * to maintain 100% 0-garrison in turf for zero-loss harvesting by main account!
+     */
+    if (c->mode == BOT_MODE_HARVEST) {
+        printf("[HARVEST] Returning march during harvest mode: triggering secondary shelter defense (0 garrison).\n");
+        RequestHideTroopInShelter(c, 12, true, NULL);
+    }
+}
+
+void AutoGatherTick(Connection *c) {
+    if (!c || !c->gather_enabled || c->gather_paused || c->mode == BOT_MODE_HARVEST) {
+        return;
+    }
+    
+    if (c->player.current_marches >= c->player.max_marches) {
+        return;
+    }
+    
+    const ResourceTile *best = FindBestResourceTile(c);
+    if (!best) return;
+    
+    TroopDispatch dispatch = {0};
+    if (CalculateGatherTroops(c, best->remaining_resources, &dispatch)) {
+        SendGatherMarch(c, best->x, best->y, &dispatch);
+    }
 }
 
 
@@ -4440,4 +4936,106 @@ void RecvAllianceMemberInfo(Connection *c, const uint8_t *data) {
 		c->alliance_member.recv_index = 0;
 	}
 	
+}
+
+/*
+ * Phase 3: Shelter Defense Functions
+ */
+void RequestHideTroopInShelter(Connection *c, uint8_t hours, bool hide_lord, const uint32_t *troops)
+{
+	if (!c)
+		return;
+
+	c->size = 2; // reserve 2 bytes for packet size
+	write_u16(c->data + c->size, _MSG_REQUEST_HIDETROOPINSHELTER);
+	c->size += 2;
+
+	write_u32(c->data + c->size, ++c->protocol.seq_id);
+	c->size += 4;
+
+	// Shelter duration in hours (e.g. 12 hours)
+	write_u8(c->data + c->size, hours);
+	c->size += 1;
+
+	// Hide lord flag
+	write_u8(c->data + c->size, hide_lord ? 1 : 0);
+	c->size += 1;
+
+	// Troop counts for 16 troop types
+	if (troops) {
+		for (int i = 0; i < 16; i++) {
+			write_u32(c->data + c->size, troops[i]);
+			c->size += 4;
+		}
+	} else if (c->troop.loaded) {
+		for (int i = 0; i < 4; i++) {
+			write_u32(c->data + c->size, c->troop.infantry[i]);
+			c->size += 4;
+		}
+		for (int i = 0; i < 4; i++) {
+			write_u32(c->data + c->size, c->troop.ranged[i]);
+			c->size += 4;
+		}
+		for (int i = 0; i < 4; i++) {
+			write_u32(c->data + c->size, c->troop.cavalry[i]);
+			c->size += 4;
+		}
+		for (int i = 0; i < 4; i++) {
+			write_u32(c->data + c->size, c->troop.siege[i]);
+			c->size += 4;
+		}
+	} else {
+		write_zero(c->data + c->size, 16 * 4);
+		c->size += 16 * 4;
+	}
+
+	write_u16(c->data, c->size);
+	send_packet(c, true);
+
+	c->troops_in_shelter = true;
+	uint64_t now = c->server_time ? c->server_time : (uint64_t)time(NULL);
+	c->shelter_expire_time = now + (uint64_t)hours * 3600;
+	printf("[SHELTER] Dispatched HideTroop request for %u hours (Lord: %s).\n",
+	       hours, hide_lord ? "Sheltered" : "Left in turf");
+}
+
+void RequestReleaseShelterTroop(Connection *c)
+{
+	if (!c)
+		return;
+
+	c->size = 2; // reserve 2 bytes for packet size
+	write_u16(c->data + c->size, _MSG_REQUEST_RELEASESHELTERTROOP);
+	c->size += 2;
+
+	write_u32(c->data + c->size, ++c->protocol.seq_id);
+	c->size += 4;
+
+	write_u16(c->data, c->size);
+	send_packet(c, true);
+
+	c->troops_in_shelter = false;
+	c->shelter_expire_time = 0;
+	printf("[SHELTER] Dispatched ReleaseShelterTroop request.\n");
+}
+
+void RecvHideTroopInShelter(Connection *c, const uint8_t *data)
+{
+	(void)data;
+	if (!c)
+		return;
+
+	c->troops_in_shelter = true;
+	printf("[SHELTER] Server confirmed: Troops sheltered successfully.\n");
+}
+
+void RecvReleaseShelterTroop(Connection *c, const uint8_t *data)
+{
+	(void)data;
+	if (!c)
+		return;
+
+	c->troops_in_shelter = false;
+	c->shelter_expire_time = 0;
+	printf("[SHELTER] Server confirmed: Troops released from shelter.\n");
 }

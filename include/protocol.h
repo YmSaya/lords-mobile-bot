@@ -125,7 +125,6 @@ void RecvTechnologyInfo(Connection*, const uint8_t*, uint16_t);
 
 
 void RecvAddConflictLine(Connection *c, const uint8_t *data);
-void RecvMapInfoPlus(Connection *c, const uint8_t *data, uint16_t size);
 
 void RecvMagicGateDoEvent(Connection *c, const uint8_t *data);
 
@@ -149,5 +148,28 @@ void format_number2(uint64_t num, char *out, size_t size);
 
 void RecvAllianceMemberInfo(Connection *c, const uint8_t *data);
 void RequestAllianceMemberInfo(Connection *c);
+
+/* Phase 3: Smart Shield and Shelter Defense */
+bool IsNightShieldTime(int8_t timezone_offset, uint64_t current_time);
+bool SelectAndUseShield(Connection *c);
+void UsePriorityShield(Connection *c);
+void UpdateShieldAlertState(Connection *c);
+void WhenEnemyArmyApproachingTurf(Connection *c, const char *attacker_name);
+void WhenEnemyScoutApproachingTurf(Connection *c, const char *attacker_name);
+void RequestHideTroopInShelter(Connection *c, uint8_t hours, bool hide_lord, const uint32_t *troops);
+void RequestReleaseShelterTroop(Connection *c);
+void RecvHideTroopInShelter(Connection *c, const uint8_t *data);
+void RecvReleaseShelterTroop(Connection *c, const uint8_t *data);
+
+/* Phase 4: Map Scan and Auto Gather */
+void RecvMapInfoPlus(Connection *c, const uint8_t *data, uint16_t size);
+double CalculateTileScore(Connection *c, const ResourceTile *tile);
+const ResourceTile *FindBestResourceTile(Connection *c);
+bool CalculateGatherTroops(Connection *c, uint32_t needed_payload, TroopDispatch *out_troops);
+bool SendGatherMarch(Connection *c, uint16_t target_x, uint16_t target_y, const TroopDispatch *troops);
+void WhenEnemyApproachingGather(Connection *c, uint16_t target_x, uint16_t target_y, const char *enemy_name);
+void OnMarchReturn(Connection *c, uint8_t march_index);
+void AutoGatherTick(Connection *c);
+uint32_t GetSlotPayload(TroopSlot slot);
 
 #endif

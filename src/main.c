@@ -77,7 +77,9 @@ void BotTick(Connection *c)
 	// DarknestRallyTick(c);
 	
 	ResourceTransferTick(c);
-	
+
+	// Phase 4: Auto gather
+	AutoGatherTick(c);
 }
 
 uint8_t GetVIPLevel(uint32_t vipPoints)
@@ -416,6 +418,12 @@ void ProcessConnection(Connection *c)
 				case _MSG_RESP_ALLIANCE_MEMBERINFO: 
 					RecvAllianceMemberInfo(c, s->buffer + s->parse_pos + 4);
 					// dump_data("_MSG_RESP_ALLIANCE_MEMBERINFO", "", s->buffer + s->parse_pos + 4, s->packet_size - 4);
+					break;
+				case _MSG_RESP_HIDETROOPINSHELTER:
+					RecvHideTroopInShelter(c, s->buffer + s->parse_pos + 4);
+					break;
+				case _MSG_RESP_RELEASESHELTERTROOP:
+					RecvReleaseShelterTroop(c, s->buffer + s->parse_pos + 4);
 					break;
 				default:
 					

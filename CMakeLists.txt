@@ -82,3 +82,56 @@ else()
 endif()
 
 add_test(NAME test_phase2 COMMAND test_phase2)
+
+add_executable(test_phase3
+    tests/test_phase3.c
+    src/cli.c
+    src/connection.c
+    src/log.c
+    src/protocol.c
+    src/des.c
+    src/map_point.c
+    src/command.c
+    src/config.c
+)
+
+target_compile_definitions(test_phase3 PRIVATE
+    VERSION="${PROJECT_VERSION}"
+)
+
+target_include_directories(test_phase3 PRIVATE include)
+
+if(WIN32)
+    target_link_libraries(test_phase3 PRIVATE ws2_32)
+else()
+    target_link_libraries(test_phase3 PRIVATE pthread)
+endif()
+
+add_test(NAME test_phase3 COMMAND test_phase3)
+
+add_executable(test_phase4
+    tests/test_phase4.c
+    src/cli.c
+    src/connection.c
+    src/log.c
+    src/protocol.c
+    src/des.c
+    src/map_point.c
+    src/command.c
+    src/config.c
+)
+
+target_compile_definitions(test_phase4 PRIVATE
+    VERSION="${PROJECT_VERSION}"
+)
+
+target_include_directories(test_phase4 PRIVATE include)
+
+if(WIN32)
+    target_link_libraries(test_phase4 PRIVATE ws2_32)
+else()
+    target_link_libraries(test_phase4 PRIVATE pthread)
+endif()
+
+add_test(NAME test_phase4 COMMAND test_phase4)
+

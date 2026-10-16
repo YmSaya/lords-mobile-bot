@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "config.h"
+#include "protocol.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -268,6 +269,18 @@ void CLI_ShowStatus(Connection *c)
 
     snprintf(line_buf, sizeof(line_buf), "Bot Mode     : %s", mode_str);
     printf("| %-76.76s |\n", line_buf);
+    snprintf(line_buf, sizeof(line_buf), "Shelter      : %s",
+             c->troops_in_shelter ? "Troops Sheltered (12 Hours)" : "Empty (0 in Shelter)");
+    printf("| %-76.76s |\n", line_buf);
+    if (c->shield_alert_24h_active) {
+        snprintf(line_buf, sizeof(line_buf), "Shield Alert : ** 24H SHORTAGE ALERT ACTIVE (4h/8h Depleted!) **");
+        printf("| %-76.76s |\n", line_buf);
+    }
+    snprintf(line_buf, sizeof(line_buf), "Gathering    : %s (Paused: %s, Marches: %u/%u)",
+             c->gather_enabled ? "ENABLED" : "DISABLED",
+             (c->gather_paused || c->mode == BOT_MODE_HARVEST) ? "YES" : "NO",
+             c->player.current_marches, c->player.max_marches);
+    printf("| %-76.76s |\n", line_buf);
     printf("+------------------------------------------------------------------------------+\n");
     snprintf(line_buf, sizeof(line_buf), "Shield       : %s", shield_status);
     printf("| %-76.76s |\n", line_buf);
@@ -334,6 +347,7 @@ void CLI_ProcessInput(Connection *c, const char *line)
         printf("| help             : Display command help list                                 |\n");
         printf("| status           : Display structured ASCII status dashboard                 |\n");
         printf("| harvest <on|off> : Toggle harvest mode (shelter army / resource collection)  |\n");
+        printf("| gather <on|off>  : Toggle auto gathering dispatch                         |\n");
         printf("| shield <on|off>  : Toggle 24/7 shield protection                             |\n");
         printf("| reload           : Hot reload config file without reconnecting               |\n");
         printf("| quit / exit      : Cleanly disconnect and exit application                   |\n");
@@ -351,17 +365,52 @@ void CLI_ProcessInput(Connection *c, const char *line)
             printf("+------------------------------------------------------------------------------+\n");
         } else if (STR_CMP(arg, "on") == 0) {
             c->mode = BOT_MODE_HARVEST;
+            c->gather_paused = true;
+            RequestHideTroopInShelter(c, 12, true, NULL);
             printf("+------------------------------------------------------------------------------+\n");
-            printf("| %-76.76s |\n", "[MODE] Harvest mode ENABLED (Army shelter / Ready for harvesting)");
+            printf("| %-76.76s |\n", "[MODE] Harvest mode ENABLED (Army shelter 12h / Ready for harvesting)");
             printf("+------------------------------------------------------------------------------+\n");
         } else if (STR_CMP(arg, "off") == 0) {
             c->mode = BOT_MODE_NORMAL;
+            c->gather_paused = false;
+            RequestReleaseShelterTroop(c);
+            SelectAndUseShield(c);
             printf("+------------------------------------------------------------------------------+\n");
-            printf("| %-76.76s |\n", "[MODE] Normal mode ENABLED (Daily farm / Shield protection active)");
+            printf("| %-76.76s |\n", "[MODE] Normal mode ENABLED (Troops released / Shield restored)");
             printf("+------------------------------------------------------------------------------+\n");
         } else {
             printf("+------------------------------------------------------------------------------+\n");
             snprintf(line_buf, sizeof(line_buf), "[ERROR] Invalid harvest param '%s'. Usage: harvest <on|off>", arg);
+            printf("| %-76.76s |\n", line_buf);
+            printf("+------------------------------------------------------------------------------+\n");
+        }
+    }
+    else if (STR_CMP(cmd, "gather") == 0) {
+        if (!arg || arg[0] == '\0') {
+            printf("+------------------------------------------------------------------------------+\n");
+            printf("| %-76.76s |\n", "Usage: gather <on|off>");
+            snprintf(line_buf, sizeof(line_buf), "Gathering: %s (Paused: %s, Marches: %u/%u)",
+                     c->gather_enabled ? "ENABLED" : "DISABLED",
+                     (c->gather_paused || c->mode == BOT_MODE_HARVEST) ? "YES" : "NO",
+                     c->player.current_marches, c->player.max_marches);
+            printf("| %-76.76s |\n", line_buf);
+            printf("+------------------------------------------------------------------------------+\n");
+        } else if (STR_CMP(arg, "on") == 0) {
+            c->gather_enabled = true;
+            if (c->mode != BOT_MODE_HARVEST) {
+                c->gather_paused = false;
+            }
+            printf("+------------------------------------------------------------------------------+\n");
+            printf("| %-76.76s |\n", "[GATHER] Auto gathering ENABLED");
+            printf("+------------------------------------------------------------------------------+\n");
+        } else if (STR_CMP(arg, "off") == 0) {
+            c->gather_enabled = false;
+            printf("+------------------------------------------------------------------------------+\n");
+            printf("| %-76.76s |\n", "[GATHER] Auto gathering DISABLED");
+            printf("+------------------------------------------------------------------------------+\n");
+        } else {
+            printf("+------------------------------------------------------------------------------+\n");
+            snprintf(line_buf, sizeof(line_buf), "[ERROR] Invalid gather param '%s'. Usage: gather <on|off>", arg);
             printf("| %-76.76s |\n", line_buf);
             printf("+------------------------------------------------------------------------------+\n");
         }
