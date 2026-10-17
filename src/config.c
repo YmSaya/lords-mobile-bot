@@ -128,6 +128,78 @@ bool IsPlayerWhitelisted(const Connection *c, const char *player_name)
     return false;
 }
 
+bool Discord_ParseAdminUsers(Connection *c, const char *value)
+{
+    if (!c)
+        return false;
+
+    c->discord.admin_user_count = 0;
+    memset(c->discord.admin_users, 0, sizeof(c->discord.admin_users));
+
+    if (!value || value[0] == '\0')
+        return true;
+
+    const char *p = value;
+    while (*p && c->discord.admin_user_count < MAX_DISCORD_ADMINS) {
+        while (*p && isspace((unsigned char)*p))
+            p++;
+
+        if (*p == '\0')
+            break;
+
+        const char *comma = strchr(p, ',');
+        const char *end = comma ? comma : (p + strlen(p));
+
+        while (end > p && isspace((unsigned char)*(end - 1)))
+            end--;
+
+        size_t len = (size_t)(end - p);
+        if (len > 0) {
+            if (len >= MAX_DISCORD_ID_LEN)
+                len = MAX_DISCORD_ID_LEN - 1;
+
+            memcpy(c->discord.admin_users[c->discord.admin_user_count], p, len);
+            c->discord.admin_users[c->discord.admin_user_count][len] = '\0';
+            c->discord.admin_user_count++;
+        }
+
+        if (!comma)
+            break;
+        p = comma + 1;
+    }
+
+    return true;
+}
+
+bool Discord_IsAdminUser(const Connection *c, const char *user_id)
+{
+    if (!c || !user_id || c->discord.admin_user_count == 0)
+        return false;
+
+    const char *p = user_id;
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (*p == '\0')
+        return false;
+
+    size_t len = strlen(p);
+    while (len > 0 && isspace((unsigned char)p[len - 1]))
+        len--;
+
+    if (len == 0)
+        return false;
+
+    for (uint8_t i = 0; i < c->discord.admin_user_count; i++) {
+        size_t alen = strlen(c->discord.admin_users[i]);
+        if (alen == len && strncmp(c->discord.admin_users[i], p, len) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static CommandChannel ParseCommandChannel(const char *value)
 {
     if (strcmp(value, "WORLD") == 0)
@@ -433,6 +505,21 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	if (strcmp(key, "whitelist.players") == 0) {
 		return ParseWhitelist(c, value);
 	}
+
+	if (strcmp(key, "discord.ipc_port") == 0) {
+		c->discord.ipc_port = (uint16_t)strtoul(value, NULL, 10);
+		return true;
+	}
+
+	if (strcmp(key, "discord.bot_token") == 0) {
+		strncpy(c->discord.bot_token, value, sizeof(c->discord.bot_token) - 1);
+		c->discord.bot_token[sizeof(c->discord.bot_token) - 1] = '\0';
+		return true;
+	}
+
+	if (strcmp(key, "discord.admin_users") == 0) {
+		return Discord_ParseAdminUsers(c, value);
+	}
 	
 	return true;
 }
@@ -537,6 +624,7 @@ bool ReloadConfig(Connection *c, const char *filename)
     c->alliance = temp->alliance;
     c->darknest = temp->darknest;
     c->app = temp->app;
+    c->discord = temp->discord;
 
     c->bot.command_prefix = temp->bot.command_prefix;
     c->bot.command_input = temp->bot.command_input;
@@ -565,6 +653,15 @@ void Configuration(Connection *client)
 	client->whitelist_count = 0;
 	memset(client->whitelist, 0, sizeof(client->whitelist));
 	client->running = true;
+
+	// Phase 5: Discord & IPC defaults and Auto-Reconnect tracker
+	client->discord.ipc_port = 28888;
+	client->discord.bot_token[0] = '\0';
+	client->discord.admin_user_count = 0;
+	memset(client->discord.admin_users, 0, sizeof(client->discord.admin_users));
+	client->ipc_listen_sock = -1;
+	client->ipc_thread = NULL;
+	Reconnect_Init(&client->reconnect);
 
 	// Default settings
 	// Command prefix
@@ -716,6 +813,14 @@ bool CreateDefaultConfig(const char *filename)
 		
 		"# Whitelist of main/authorized player accounts (comma-separated, internal spaces preserved)\n"
 		"whitelist.players = King Arthur, My Farm 01\n\n"
+		
+		"# Discord Bot & Localhost IPC\n"
+		"# Port for Localhost TCP IPC communication (default: 28888)\n"
+		"discord.ipc_port = 28888\n\n"
+		"# Optional Discord Bot Token for Node.js sidecar (if empty, C core runs independently)\n"
+		"discord.bot_token = \n\n"
+		"# Discord administrator user IDs (comma-separated snowflake IDs)\n"
+		"discord.admin_users = 123456789012345678\n\n"
 		
 		"# Replace the example values below with your own account information.\n"
 		"account.igg_id = 1234567890\n"

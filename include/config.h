@@ -13,4 +13,7 @@ char *TrimWhitespace(char *str);
 bool ParseWhitelist(Connection *c, const char *value);
 bool IsPlayerWhitelisted(const Connection *c, const char *player_name);
 
+bool Discord_ParseAdminUsers(Connection *c, const char *value);
+bool Discord_IsAdminUser(const Connection *c, const char *user_id);
+
 #endif

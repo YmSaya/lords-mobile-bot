@@ -8,6 +8,16 @@
 ## [未發布] (Unreleased)
 
 ### 新增 (Added)
+- 建立 Phase 5 自動抓取更新、Discord.js v14 側車與完全自主運作實作計畫與總結文檔 (.antigravity/Plan/phase5_auto_update_and_discord_v14/plan.md, .antigravity/Memory/phase5_auto_update_and_discord_v14/summary.md)。
+- 實作 C 核心 Localhost TCP IPC 本機通訊服務模組 (include/ipc.h, src/ipc.c)，以背景執行緒安全監聽 127.0.0.1:28888 迴環介面，採用輕量 JSON-Line 換行分隔協定雙向傳遞控制指令與狀態回傳，並於連線端加入 select 逾時機制防範慢速請求掛死。
+- 實作 Discord.js v14 側車機器人 (discord-bot/)，包含 package.json (discord.js@^14.14.1)、index.js、deploy-commands.js 與說明手冊 README.md，註冊 /status、/harvest、/shield、/gather、/reload、/update、/help 應用程式斜線指令。
+- 實作 Discord 全指令嚴格管理員身分鎖定（Admin Whitelist Lock），全面校驗 interaction.user.id 是否於 config.cfg 之 discord.admin_users 白名單中，非白名單成員一律回傳短暫性拒絕提示「無權限執行此指令」。
+- 實作全指令純 ASCII 結構化 Discord Embed 狀態與操作回覆儀表板，嚴格禁止任何 Emoji 表情符號。
+- 實作語意化版本比對演算法 (SemVer_Parse, SemVer_Compare)，支援 Major.Minor.Patch 高低判定、前置 'v'/'V' 修剪、前後空白修剪與非十進位安全退避。
+- 實作 GitHub Release 線上下載 (Updater_DownloadFile) 與 Windows 原生 MoveFileExA 就地重命名替換回滾保護平滑升級機制 (Updater_ReplaceAndRollback, Updater_ExecuteUpdate)，支援 64KB 資訊緩衝區與自動跟隨 302 重定向下載新版至 lords-mobile-bot.exe.new，完成現役檔案重命名為 .old、.new 換入為現役檔案、換入失敗時立即重命名 .old 自動回滾復原，並透過 CreateProcess 啟動新版子進程後優雅退出舊版。
+- 實作網路中斷指數退避自動重連模組 (ReconnectTracker, Reconnect_Init, Reconnect_GetNextBackoff, Reconnect_Reset)，連線中斷時依序以 2s -> 4s -> 8s -> 16s -> 32s -> 60s 進行退避重試，連入遊戲伺服器後立即重置，搭配 100ms 切片休眠並於等待期間持續呼叫 CLI_Tick 確保指令即時響應。
+- 實作控制台 update 指令並擴充 help 指令清單。
+- 新增 Phase 5 自動化單元測試套件與 CMake CTest 整合 (tests/test_phase5.c)，涵蓋 Localhost TCP IPC 通訊、SemVer 演算法判定、二進位替換與回滾保護、Discord 管理員身分授權過濾、夜間強制護盾 5 分鐘前續期與全局自主運作狀態機聯動。
 - 建立 Phase 4 地圖資源掃描與精準負重採集實作計畫與總結文檔 (.antigravity/Plan/phase4_map_scan_and_auto_gather/plan.md, .antigravity/Memory/phase4_map_scan_and_auto_gather/summary.md)。
 - 實作地圖資源封包解析函式 RecvMapInfoPlus，解碼 _MSG_RESP_UPDATE_MAPINFO_PLUS (2220) 提取座標、種類、等級、剩餘儲量、最大儲量與佔領狀態。
 - 實作資源地塊加權選點演算法 (CalculateTileScore, FindBestResourceTile)，落實水晶>金>糧>鐵>木>石種類權重優先序、鎖定 Lv.1~Lv.2 資源區、歐幾里得距離衰減與低於 1000 門檻過低不採過濾。
@@ -42,6 +52,10 @@
 - 新增 Phase 2 自動化單元測試套件與 CMake CTest 整合 (tests/test_phase2.c)，涵蓋白名單解析、大小寫比對、指令驗證、熱重載安全與多執行緒指令佇列壓測。
 
 ### 變更 (Changed)
+- 擴充 Connection 結構體，納入 DiscordSettings (ipc_port, bot_token, admin_users, admin_user_count)、ReconnectTracker (current_delay_sec, initial_delay_sec, max_delay_sec, reconnect_attempts, reconnecting)、ipc_thread 與 ipc_listen_sock 等 Phase 5 核心狀態欄位。
+- 於 src/config.c 中支援 discord.ipc_port、discord.bot_token 與 discord.admin_users 鍵值解析、預設組態生成模板與熱重載設定同步。
+- 於 src/main.c 中整合 Localhost TCP IPC 伺服器初始化 (IPC_Init) 與銷毀 (IPC_Cleanup)，並以指數退避演算法 (2s~60s) 重構連線主迴圈，達成全系統完全自主運作。
+- 更新 CMakeLists.txt，將 src/ipc.c 與 src/updater.c 納入 client 與所有測試目標編譯，新增 test_phase5 目標，並於 WIN32 平台連結 winhttp 庫。
 - 擴充 Connection 結構體，納入 gather_enabled、gather_paused、tile_count、tiles[MAX_MAP_TILES] 與 marches[MAX_MARCHES] 等 Phase 4 核心狀態欄位。
 - 在 include/connection.h 統一定義 POINT_KIND、TroopSlot、MarchState、March、ResourceTile 與 TroopDispatch 結構體。
 - 於 src/main.c 主循環 BotTick 中整合 AutoGatherTick 推進自動採集週期。

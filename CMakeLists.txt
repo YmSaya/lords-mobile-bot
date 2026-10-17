@@ -15,6 +15,8 @@ add_executable(client
     src/command.c
     src/config.c
     src/cli.c
+    src/ipc.c
+    src/updater.c
 )
 
 target_compile_definitions(client PRIVATE
@@ -24,7 +26,7 @@ target_compile_definitions(client PRIVATE
 target_include_directories(client PRIVATE include)
 
 if(WIN32)
-    target_link_libraries(client PRIVATE ws2_32)
+    target_link_libraries(client PRIVATE ws2_32 winhttp)
 else()
     target_link_libraries(client PRIVATE pthread)
 endif()
@@ -41,6 +43,8 @@ add_executable(test_phase1
     src/command.c
     src/config.c
     src/cli.c
+    src/ipc.c
+    src/updater.c
 )
 
 target_compile_definitions(test_phase1 PRIVATE
@@ -50,7 +54,7 @@ target_compile_definitions(test_phase1 PRIVATE
 target_include_directories(test_phase1 PRIVATE include)
 
 if(WIN32)
-    target_link_libraries(test_phase1 PRIVATE ws2_32)
+    target_link_libraries(test_phase1 PRIVATE ws2_32 winhttp)
 else()
     target_link_libraries(test_phase1 PRIVATE pthread)
 endif()
@@ -67,6 +71,8 @@ add_executable(test_phase2
     src/map_point.c
     src/command.c
     src/config.c
+    src/ipc.c
+    src/updater.c
 )
 
 target_compile_definitions(test_phase2 PRIVATE
@@ -76,7 +82,7 @@ target_compile_definitions(test_phase2 PRIVATE
 target_include_directories(test_phase2 PRIVATE include)
 
 if(WIN32)
-    target_link_libraries(test_phase2 PRIVATE ws2_32)
+    target_link_libraries(test_phase2 PRIVATE ws2_32 winhttp)
 else()
     target_link_libraries(test_phase2 PRIVATE pthread)
 endif()
@@ -93,6 +99,8 @@ add_executable(test_phase3
     src/map_point.c
     src/command.c
     src/config.c
+    src/ipc.c
+    src/updater.c
 )
 
 target_compile_definitions(test_phase3 PRIVATE
@@ -102,7 +110,7 @@ target_compile_definitions(test_phase3 PRIVATE
 target_include_directories(test_phase3 PRIVATE include)
 
 if(WIN32)
-    target_link_libraries(test_phase3 PRIVATE ws2_32)
+    target_link_libraries(test_phase3 PRIVATE ws2_32 winhttp)
 else()
     target_link_libraries(test_phase3 PRIVATE pthread)
 endif()
@@ -119,6 +127,8 @@ add_executable(test_phase4
     src/map_point.c
     src/command.c
     src/config.c
+    src/ipc.c
+    src/updater.c
 )
 
 target_compile_definitions(test_phase4 PRIVATE
@@ -128,10 +138,37 @@ target_compile_definitions(test_phase4 PRIVATE
 target_include_directories(test_phase4 PRIVATE include)
 
 if(WIN32)
-    target_link_libraries(test_phase4 PRIVATE ws2_32)
+    target_link_libraries(test_phase4 PRIVATE ws2_32 winhttp)
 else()
     target_link_libraries(test_phase4 PRIVATE pthread)
 endif()
 
 add_test(NAME test_phase4 COMMAND test_phase4)
 
+add_executable(test_phase5
+    tests/test_phase5.c
+    src/cli.c
+    src/connection.c
+    src/log.c
+    src/protocol.c
+    src/des.c
+    src/map_point.c
+    src/command.c
+    src/config.c
+    src/ipc.c
+    src/updater.c
+)
+
+target_compile_definitions(test_phase5 PRIVATE
+    VERSION="${PROJECT_VERSION}"
+)
+
+target_include_directories(test_phase5 PRIVATE include)
+
+if(WIN32)
+    target_link_libraries(test_phase5 PRIVATE ws2_32 winhttp)
+else()
+    target_link_libraries(test_phase5 PRIVATE pthread)
+endif()
+
+add_test(NAME test_phase5 COMMAND test_phase5)

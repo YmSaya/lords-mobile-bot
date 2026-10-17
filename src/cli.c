@@ -1,6 +1,7 @@
 #include "cli.h"
 #include "config.h"
 #include "protocol.h"
+#include "updater.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -350,6 +351,7 @@ void CLI_ProcessInput(Connection *c, const char *line)
         printf("| gather <on|off>  : Toggle auto gathering dispatch                         |\n");
         printf("| shield <on|off>  : Toggle 24/7 shield protection                             |\n");
         printf("| reload           : Hot reload config file without reconnecting               |\n");
+        printf("| update           : Check GitHub for updates and apply in-place upgrade       |\n");
         printf("| quit / exit      : Cleanly disconnect and exit application                   |\n");
         printf("+------------------------------------------------------------------------------+\n");
     }
@@ -454,6 +456,20 @@ void CLI_ProcessInput(Connection *c, const char *line)
             printf("| %-76.76s |\n", "[ERROR] Failed to reload configuration. Previous settings retained.");
             printf("+------------------------------------------------------------------------------+\n");
         }
+    }
+    else if (STR_CMP(cmd, "update") == 0) {
+        char msg[256] = {0};
+        printf("[UPDATE] Checking for application updates...\n");
+        bool ok = Updater_ExecuteUpdate(c, msg, sizeof(msg));
+        printf("+------------------------------------------------------------------------------+\n");
+        if (ok) {
+            snprintf(line_buf, sizeof(line_buf), "[UPDATE] %s", msg);
+            printf("| %-76.76s |\n", line_buf);
+        } else {
+            snprintf(line_buf, sizeof(line_buf), "[ERROR] %s", msg);
+            printf("| %-76.76s |\n", line_buf);
+        }
+        printf("+------------------------------------------------------------------------------+\n");
     }
     else if (STR_CMP(cmd, "quit") == 0 || STR_CMP(cmd, "exit") == 0) {
         c->running = false;

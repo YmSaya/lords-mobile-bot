@@ -24,6 +24,8 @@
 
 #include "config.h"
 #include "cli.h"
+#include "ipc.h"
+#include "updater.h"
 
 #include "version.h"
 
@@ -554,82 +556,117 @@ int main(int argc, const char *argv[]) {
 	strncpy(client->config_path, argv[1], sizeof(client->config_path) - 1);
 	client->config_path[sizeof(client->config_path) - 1] = '\0';
 	CLI_Init(client);
+	IPC_Init(client, client->discord.ipc_port);
 
-	// Establish TCP connection to server and store socket descriptor in client
-	client->sock = connect_server(client->gateway_server.addr, client->gateway_server.port);
-	
-	// Validate socket creation; -1 indicates connection failure
-	if (client->sock == -1) {
-		LOGE("Failed to connect to %s:%d\n", client->gateway_server.addr, client->gateway_server.port);
-		CLI_Cleanup(client);
-		free(client);
+	ReconnectTracker *rt = &client->reconnect;
+	Reconnect_Init(rt);
+
+	while (client->running) {
+		client->lobby_login = false;
+
+		/* Establish TCP connection to gateway server */
+		client->sock = connect_server(client->gateway_server.addr, client->gateway_server.port);
+		if (client->sock == -1) {
+			LOGE("Failed to connect to gateway %s:%d\n", client->gateway_server.addr, client->gateway_server.port);
+			if (!client->running) break;
+			uint32_t delay = Reconnect_GetNextBackoff(rt);
+			LOGI("[AUTONOMOUS] Connection lost. Reconnecting in %u seconds (Attempt %u)...\n",
+			     delay, rt->reconnect_attempts);
+			for (uint32_t s = 0; s < delay * 10 && client->running; s++) {
+				CLI_Tick(client);
 #ifdef _WIN32
-		WSACleanup();
+				Sleep(100);
+#else
+				usleep(100000);
 #endif
-		return EXIT_FAILURE;
-	}
-	
-	LOGI("Connected gateway server: %s:%u\n", client->gateway_server.addr, client->gateway_server.port);
-	LOGI("Game client: v%u.%u.%u\n", client->app.version_major, client->app.version_minor, client->app.version_patch);
-	
-	RequestGuestLogIn(client);
-		
-	ProcessConnection(client);
-	
-	if (!client->running) {
-		CLI_Cleanup(client);
+			}
+			continue;
+		}
+
+		LOGI("Connected gateway server: %s:%u\n", client->gateway_server.addr, client->gateway_server.port);
+		LOGI("Game client: v%u.%u.%u\n", client->app.version_major, client->app.version_minor, client->app.version_patch);
+
+		RequestGuestLogIn(client);
+		ProcessConnection(client);
+
+		if (!client->running) break;
+
+		if (!client->lobby_login) {
+			LOGE("Gateway login failed\n");
+			disconnect(client);
+			uint32_t delay = Reconnect_GetNextBackoff(rt);
+			LOGI("[AUTONOMOUS] Connection lost. Reconnecting in %u seconds (Attempt %u)...\n",
+			     delay, rt->reconnect_attempts);
+			for (uint32_t s = 0; s < delay * 10 && client->running; s++) {
+				CLI_Tick(client);
+#ifdef _WIN32
+				Sleep(100);
+#else
+				usleep(100000);
+#endif
+			}
+			continue;
+		}
+
+		/* Disconnect gateway socket before connecting to game server */
 		disconnect(client);
-		free(client);
+
+		/* Establish TCP connection to game server */
+		client->sock = connect_server(client->game_server.addr, client->game_server.port);
+		if (client->sock == -1) {
+			LOGE("Failed to connect game server %s:%d\n", client->game_server.addr, client->game_server.port);
+			if (!client->running) break;
+			uint32_t delay = Reconnect_GetNextBackoff(rt);
+			LOGI("[AUTONOMOUS] Connection lost. Reconnecting in %u seconds (Attempt %u)...\n",
+			     delay, rt->reconnect_attempts);
+			for (uint32_t s = 0; s < delay * 10 && client->running; s++) {
+				CLI_Tick(client);
 #ifdef _WIN32
-		WSACleanup();
+				Sleep(100);
+#else
+				usleep(100000);
 #endif
-		return 0;
+			}
+			continue;
+		}
+
+		if (set_nonblocking(client) != 0) {
+			LOGE("set_nonblocking failed\n");
+		}
+
+		LOGI("IGG ID: %llu\n", (unsigned long long)client->auth.igg_id);
+		LOGI("Connected game server: %s:%u\n", client->game_server.addr, client->game_server.port);
+
+		/* Successful connection resets reconnect backoff */
+		Reconnect_Reset(rt);
+
+		memset(&client->stream, 0, sizeof(client->stream));
+		LOGI("Logging game server\n");
+		RequestLogIn(client);
+		RequestClientInitOver(client);
+
+		/* Main event loop */
+		ProcessConnection(client);
+
+		disconnect(client);
+
+		if (!client->running) break;
+
+		/* Reconnect on unexpected disconnect with exponential backoff */
+		uint32_t delay = Reconnect_GetNextBackoff(rt);
+		LOGI("[AUTONOMOUS] Game server connection closed. Reconnecting in %u seconds (Attempt %u)...\n",
+		     delay, rt->reconnect_attempts);
+		for (uint32_t s = 0; s < delay * 10 && client->running; s++) {
+			CLI_Tick(client);
+#ifdef _WIN32
+			Sleep(100);
+#else
+			usleep(100000);
+#endif
+		}
 	}
 
-	if (!client->lobby_login) {
-		LOGE("Login failed!\n");
-		CLI_Cleanup(client);
-		disconnect(client);
-		free(client);
-#ifdef _WIN32
-		WSACleanup();
-#endif
-		return EXIT_FAILURE;
-	}
-	
-	// Establish TCP connection to game server 
-	client->sock = connect_server(client->game_server.addr, client->game_server.port);
-	
-	if (client->sock == -1) {
-		LOGE("Failed to connect game server %s:%d\n", client->game_server.addr, client->game_server.port);
-		CLI_Cleanup(client);
-		free(client);
-#ifdef _WIN32
-		WSACleanup();
-#endif
-		return EXIT_FAILURE;
-	}
-	
-	if (set_nonblocking(client) != 0) {
-		LOGE("set_nonblocking\n");
-	}
-	
-	LOGI("IGG ID: %llu\n", (unsigned long long)client->auth.igg_id);
-	
-	LOGI("Connected game server: %s:%u\n", client->game_server.addr, client->game_server.port);
-	
-	// clear old buffer 
-	memset(&client->stream, 0, sizeof(client->stream));
-	
-	// Game login
-	LOGI("Logging game server\n");
-	RequestLogIn(client);
-	
-	RequestClientInitOver(client);
-	
-	// Handle 
-	ProcessConnection(client);
-	
+	IPC_Cleanup(client);
 	CLI_Cleanup(client);
 	disconnect(client);
 	free(client);
@@ -637,6 +674,6 @@ int main(int argc, const char *argv[]) {
 #ifdef _WIN32
 	WSACleanup();
 #endif
-	
+
 	return 0;
 }

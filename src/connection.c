@@ -71,3 +71,42 @@ void reset_connection(Connection *c)
     memset(c, 0, sizeof(*c));
     c->sock = -1;
 }
+
+void Reconnect_Init(ReconnectTracker *rt)
+{
+    if (!rt)
+        return;
+
+    rt->initial_delay_sec = 2;
+    rt->max_delay_sec = 60;
+    rt->current_delay_sec = 2;
+    rt->reconnect_attempts = 0;
+    rt->reconnecting = false;
+}
+
+uint32_t Reconnect_GetNextBackoff(ReconnectTracker *rt)
+{
+    if (!rt)
+        return 2;
+
+    uint32_t delay = rt->current_delay_sec;
+    rt->reconnect_attempts++;
+    rt->reconnecting = true;
+
+    uint32_t next = rt->current_delay_sec * 2;
+    if (next > rt->max_delay_sec || next < rt->current_delay_sec) {
+        next = rt->max_delay_sec;
+    }
+    rt->current_delay_sec = next;
+    return delay;
+}
+
+void Reconnect_Reset(ReconnectTracker *rt)
+{
+    if (!rt)
+        return;
+
+    rt->current_delay_sec = rt->initial_delay_sec ? rt->initial_delay_sec : 2;
+    rt->reconnect_attempts = 0;
+    rt->reconnecting = false;
+}

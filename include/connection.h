@@ -83,6 +83,24 @@ typedef struct {
     bool initialized;
 } CommandQueue;
 
+#define MAX_DISCORD_ADMINS 16
+#define MAX_DISCORD_ID_LEN 32
+
+typedef struct {
+    uint16_t ipc_port;
+    char bot_token[128];
+    char admin_users[MAX_DISCORD_ADMINS][MAX_DISCORD_ID_LEN];
+    uint8_t admin_user_count;
+} DiscordSettings;
+
+typedef struct {
+    uint32_t current_delay_sec;
+    uint32_t initial_delay_sec;
+    uint32_t max_delay_sec;
+    uint32_t reconnect_attempts;
+    bool reconnecting;
+} ReconnectTracker;
+
 #define MAX_ITEM_COUNT 65536
 
 typedef struct {
@@ -1053,6 +1071,17 @@ typedef struct {
 	uint16_t tile_count;
 	ResourceTile tiles[MAX_MAP_TILES];
 	March marches[MAX_MARCHES];
+
+	// Phase 5: Discord sidecar settings, IPC server, and auto reconnect
+	DiscordSettings discord;
+	ReconnectTracker reconnect;
+#ifdef _WIN32
+	HANDLE ipc_thread;
+	SOCKET ipc_listen_sock;
+#else
+	pthread_t ipc_thread;
+	int ipc_listen_sock;
+#endif
 } Connection;
 
 /* API */
@@ -1061,5 +1090,10 @@ void disconnect(Connection *conn);
 bool send_packet(Connection *conn, bool enc);
 int set_nonblocking(Connection *conn);
 void reset_connection(Connection *c);
+
+/* Phase 5 Reconnect API */
+void Reconnect_Init(ReconnectTracker *rt);
+uint32_t Reconnect_GetNextBackoff(ReconnectTracker *rt);
+void Reconnect_Reset(ReconnectTracker *rt);
 
 #endif
